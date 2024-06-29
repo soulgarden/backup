@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "backup.fullname" . }}
+  labels:
+    {{- include "backup.labels" . | nindent 4 }}
+spec:
+  schedule: "30 23 */3 * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: {{ .Chart.Name }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+{{/*              command: [ "echo", "OK" ]*/}}
+              env:
+                - { name: PGHOST, value: "{{ .Values.pg.host }}" }
+                - { name: PGPORT, value: "{{ .Values.pg.port }}" }
+                - { name: PGUSER, value: "{{ .Values.pg.user }}" }
+                - { name: PGPASSWORD, value: "{{ .Values.pg.password }}" }
+                - { name: PGDATABASE, value: "{{ .Values.pg.name }}" }
+                - { name: BUCKET, value: "{{ .Values.s3.bucket }}" }
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - { name: config, subPath: .s3cfg, mountPath: /root/.s3cfg, readOnly: true }
+          restartPolicy: Never
+          nodeSelector:
+            shared: "true"
+          volumes:
+            - { name: config, configMap: { name: {{ include "backup.fullname" . }}-config } }
