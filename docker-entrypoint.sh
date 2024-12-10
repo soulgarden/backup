@@ -7,7 +7,7 @@ timestamp=$(date +'%H%M')
 filename="$(date +%d-%m-%y_%H-%M-%S)".sql.gz
 filepath=/tmp/"${PGDATABASE}"-"$filename"
 
-pg_dump -v --no-acl | gzip -9 > "$filepath"
+pg_dump -v --no-acl -d "${PGDATABASE}" -n public | gzip -9 > "$filepath"
 
 ls -s "$filepath"
 
