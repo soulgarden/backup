@@ -1,0 +1,98 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "backup.fullname" . }}
+  labels:
+    {{- include "backup.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  {{- with .Values.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  suspend: {{ .Values.suspend }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "backup.selectorLabels" . | nindent 12 }}
+            {{- with .Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "backup.serviceAccountName" . }}
+          automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: {{ .Chart.Name }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              env:
+                - name: PGHOST
+                  value: {{ .Values.pg.host | quote }}
+                - name: PGPORT
+                  value: {{ .Values.pg.port | quote }}
+                - name: PGUSER
+                  value: {{ .Values.pg.user | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.pg.existingSecret | default (printf "%s-postgres" (include "backup.fullname" .)) }}
+                      key: {{ .Values.pg.passwordKey | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.pg.name | quote }}
+                - name: BUCKET
+                  value: {{ .Values.s3.bucket | quote }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: config
+                  subPath: .s3cfg
+                  mountPath: /home/backup/.s3cfg
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                {{- with .Values.volumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+          restartPolicy: Never
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumes:
+            - name: config
+              secret:
+                secretName: {{ .Values.s3.existingSecret | default (printf "%s-config" (include "backup.fullname" .)) }}
+                defaultMode: 0440
+                items:
+                  - key: {{ .Values.s3.configKey | quote }}
+                    path: .s3cfg
+            - name: tmp
+              emptyDir: {}
+            {{- with .Values.volumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}

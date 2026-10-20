@@ -1,10 +1,20 @@
-### Example user template template
-### Example user template
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.s3cfg
+.s3cfg.*
+!.s3cfg.example
 
-# IntelliJ project files
-.idea
+# Database dumps and generated output
+*.sql
+*.sql.gz
+*.dump
+*.tgz
+graphify-out/
+
+# Editors and OS files
+.idea/
+.vscode/
 *.iml
-out
-gen
-
-.s3cfg.local
+.DS_Store

@@ -1,0 +1,5 @@
+# Only runtime inputs belong in the build context.
+**
+!Dockerfile
+!docker-entrypoint.sh
+!.s3cfg.example
