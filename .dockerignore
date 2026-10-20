@@ -1,5 +1,7 @@
-# Only runtime inputs belong in the build context.
 **
 !Dockerfile
-!docker-entrypoint.sh
-!.s3cfg.example
+!requirements.txt
+!VERSION
+!backup
+!backup/**
+backup/**/__pycache__/

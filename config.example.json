@@ -1,0 +1,67 @@
+{
+  "configVersion": 2,
+  "postgresql": {
+    "majorVersion": 16,
+    "targetServerMajor": 16,
+    "connectTimeoutSeconds": 10,
+    "lockWaitTimeoutSeconds": 60
+  },
+  "backup": {
+    "includeSchemas": [],
+    "excludeSchemas": [],
+    "excludeTables": [],
+    "excludeTableData": [],
+    "includeLargeObjects": true,
+    "includeAcl": true,
+    "strictNames": true,
+    "compressionLevel": 6
+  },
+  "validation": {
+    "requiredSchemas": [],
+    "requiredTables": [],
+    "minTableDataEntries": 0
+  },
+  "s3": {
+    "endpoint": "https://ams3.digitaloceanspaces.com",
+    "region": "us-east-1",
+    "bucket": "example-backups",
+    "prefix": "example/v2/",
+    "addressingStyle": "virtual",
+    "signatureVersion": "s3v4",
+    "connectTimeoutSeconds": 10,
+    "readTimeoutSeconds": 30,
+    "totalAttempts": 3,
+    "multipartThresholdMiB": 64,
+    "multipartChunkSizeMiB": 16,
+    "maxConcurrency": 2,
+    "readChunkMiB": 8,
+    "requestChecksumCalculation": "when_required",
+    "responseChecksumValidation": "when_required"
+  },
+  "process": {
+    "shutdownGraceSeconds": 45
+  },
+  "retention": {
+    "enabled": false,
+    "dryRun": true,
+    "deletionApproved": false,
+    "maxAgeDays": 365,
+    "keepLast": 7,
+    "incompleteRunMaxAgeDays": 7,
+    "legacy": {
+      "enabled": false,
+      "dryRun": true,
+      "prefix": "",
+      "filenamePattern": "",
+      "minVerifiedV2Sets": 7
+    }
+  },
+  "observability": {
+    "sizeAnomaly": {
+      "historySamples": 7,
+      "minSamples": 3,
+      "minRatio": 0.5,
+      "maxRatio": 2.0
+    }
+  }
+}

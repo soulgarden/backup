@@ -1,0 +1,23 @@
+{{- if and (not .Values.suspend) .Values.releaseGates.requireDigest (not .Values.image.digest) }}
+{{- fail "Production activation requires the exact tested image digest" }}
+{{- end }}
+{{- if and (not .Values.suspend) (or (not .Values.releaseGates.providerContractVerified) (not .Values.releaseGates.multipartLifecycleVerified)) }}
+{{- fail "Activation requires provider contract and multipart lifecycle verification" }}
+{{- end }}
+{{- if ge (int .Values.process.shutdownGraceSeconds) (int .Values.cronjob.terminationGracePeriodSeconds) }}
+{{- fail "Runner shutdown grace must be less than Pod termination grace" }}
+{{- end }}
+{{- if and (not .Values.retention.dryRun) (not .Values.retention.deletionApproved) }}
+{{- fail "Destructive retention requires scoped-key and deletion-plan approval" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backup.fullname" . }}-runner
+  labels:
+    {{- include "backup.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- $s3 := omit .Values.s3 "existingSecret" "accessKeyKey" "secretKeyKey" "sessionTokenKey" "accessKey" "secretKey" "sessionToken" }}
+    {{- $config := dict "configVersion" .Values.configVersion "postgresql" .Values.postgresql "backup" .Values.backup "validation" .Values.validation "s3" $s3 "process" .Values.process "retention" .Values.retention "observability" .Values.observability }}
+    {{- $config | toPrettyJson | nindent 4 }}

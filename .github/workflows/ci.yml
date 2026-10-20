@@ -1,0 +1,33 @@
+name: Backup checks
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.19.0
+      - run: pip install -r requirements-dev.txt
+      - run: make lint test
+      - run: python scripts/check_charts.py
+      - run: docker build --platform linux/amd64 -t backup-test:${{ github.sha }} .
+      - run: python scripts/integration.py --image backup-test:${{ github.sha }}
+      - run: python scripts/test_logalert.py
+      - run: python scripts/test_client_matrix.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-checks-${{ github.sha }}
+          path: |
+            coverage.xml
+            artifacts/

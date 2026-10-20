@@ -1,0 +1,368 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "configVersion",
+    "postgresql",
+    "backup",
+    "validation",
+    "s3",
+    "process",
+    "retention",
+    "observability"
+  ],
+  "properties": {
+    "configVersion": {
+      "const": 2
+    },
+    "postgresql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "majorVersion",
+        "targetServerMajor",
+        "connectTimeoutSeconds",
+        "lockWaitTimeoutSeconds"
+      ],
+      "properties": {
+        "majorVersion": {
+          "enum": [
+            16
+          ]
+        },
+        "targetServerMajor": {
+          "enum": [
+            16
+          ]
+        },
+        "connectTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "lockWaitTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "includeSchemas",
+        "excludeSchemas",
+        "excludeTables",
+        "excludeTableData",
+        "includeLargeObjects",
+        "includeAcl",
+        "strictNames",
+        "compressionLevel"
+      ],
+      "properties": {
+        "includeSchemas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "excludeSchemas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "excludeTables": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "excludeTableData": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "includeLargeObjects": {
+          "type": "boolean"
+        },
+        "includeAcl": {
+          "type": "boolean"
+        },
+        "strictNames": {
+          "type": "boolean"
+        },
+        "compressionLevel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredSchemas",
+        "requiredTables",
+        "minTableDataEntries"
+      ],
+      "properties": {
+        "requiredSchemas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requiredTables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "schema",
+              "table",
+              "requireData"
+            ],
+            "properties": {
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "table": {
+                "type": "string",
+                "minLength": 1
+              },
+              "requireData": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "minTableDataEntries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "s3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "region",
+        "bucket",
+        "prefix",
+        "addressingStyle",
+        "signatureVersion",
+        "connectTimeoutSeconds",
+        "readTimeoutSeconds",
+        "totalAttempts",
+        "multipartThresholdMiB",
+        "multipartChunkSizeMiB",
+        "maxConcurrency",
+        "readChunkMiB",
+        "requestChecksumCalculation",
+        "responseChecksumValidation"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https://[^/]+/?$"
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bucket": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^[^/]+(?:/[^/]+)*/$"
+        },
+        "addressingStyle": {
+          "enum": [
+            "virtual",
+            "path"
+          ]
+        },
+        "signatureVersion": {
+          "enum": [
+            "s3v4"
+          ]
+        },
+        "connectTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "readTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "totalAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "multipartThresholdMiB": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1024
+        },
+        "multipartChunkSizeMiB": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 512
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "readChunkMiB": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "requestChecksumCalculation": {
+          "enum": [
+            "when_required"
+          ]
+        },
+        "responseChecksumValidation": {
+          "enum": [
+            "when_required"
+          ]
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shutdownGraceSeconds"
+      ],
+      "properties": {
+        "shutdownGraceSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 60
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "dryRun",
+        "deletionApproved",
+        "maxAgeDays",
+        "keepLast",
+        "incompleteRunMaxAgeDays",
+        "legacy"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "deletionApproved": {
+          "type": "boolean"
+        },
+        "maxAgeDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "keepLast": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "incompleteRunMaxAgeDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "legacy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "dryRun",
+            "prefix",
+            "filenamePattern",
+            "minVerifiedV2Sets"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "filenamePattern": {
+              "type": "string"
+            },
+            "minVerifiedV2Sets": {
+              "type": "integer",
+              "minimum": 7
+            }
+          }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sizeAnomaly"
+      ],
+      "properties": {
+        "sizeAnomaly": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "historySamples",
+            "minSamples",
+            "minRatio",
+            "maxRatio"
+          ],
+          "properties": {
+            "historySamples": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minSamples": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minRatio": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "maxRatio": {
+              "type": "number",
+              "exclusiveMinimum": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

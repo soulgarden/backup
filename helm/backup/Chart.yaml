@@ -1,7 +1,7 @@
 apiVersion: v2
 name: backup
-description: Scheduled PostgreSQL public-schema backups to S3-compatible storage
+description: Verified PostgreSQL archives in S3-compatible storage
 type: application
-version: 0.0.5
-appVersion: "0.0.5"
-kubeVersion: ">=1.27.0-0"
+version: 0.2.0
+appVersion: 0.2.0
+kubeVersion: '>=1.27.0-0'

@@ -11,11 +11,14 @@ spec:
   {{- end }}
   suspend: {{ .Values.suspend }}
   concurrencyPolicy: {{ .Values.concurrencyPolicy }}
-  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
-  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.cronjob.startingDeadlineSeconds }}
   jobTemplate:
     spec:
-      backoffLimit: {{ .Values.backoffLimit }}
+      backoffLimit: {{ .Values.cronjob.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronjob.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: {{ .Values.cronjob.ttlSecondsAfterFinished }}
       template:
         metadata:
           {{- with .Values.podAnnotations }}
@@ -36,11 +39,12 @@ spec:
           automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
           securityContext:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          terminationGracePeriodSeconds: {{ .Values.cronjob.terminationGracePeriodSeconds }}
           containers:
             - name: {{ .Chart.Name }}
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}
-              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               env:
                 - name: PGHOST
@@ -56,17 +60,17 @@ spec:
                       key: {{ .Values.pg.passwordKey | quote }}
                 - name: PGDATABASE
                   value: {{ .Values.pg.name | quote }}
-                - name: BUCKET
-                  value: {{ .Values.s3.bucket | quote }}
               resources:
                 {{- toYaml .Values.resources | nindent 16 }}
               volumeMounts:
-                - name: config
-                  subPath: .s3cfg
-                  mountPath: /home/backup/.s3cfg
+                - name: runner-config
+                  mountPath: /config
                   readOnly: true
-                - name: tmp
-                  mountPath: /tmp
+                - name: credentials
+                  mountPath: /credentials
+                  readOnly: true
+                - name: work
+                  mountPath: /work
                 {{- with .Values.volumeMounts }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -84,15 +88,25 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumes:
-            - name: config
+            - name: runner-config
+              configMap:
+                name: {{ include "backup.fullname" . }}-runner
+            - name: credentials
               secret:
-                secretName: {{ .Values.s3.existingSecret | default (printf "%s-config" (include "backup.fullname" .)) }}
+                secretName: {{ .Values.s3.existingSecret | default (printf "%s-s3-sdk" (include "backup.fullname" .)) }}
                 defaultMode: 0440
                 items:
-                  - key: {{ .Values.s3.configKey | quote }}
-                    path: .s3cfg
-            - name: tmp
-              emptyDir: {}
+                  - key: {{ .Values.s3.accessKeyKey }}
+                    path: access_key
+                  - key: {{ .Values.s3.secretKeyKey }}
+                    path: secret_key
+                  {{- if .Values.s3.sessionTokenKey }}
+                  - key: {{ .Values.s3.sessionTokenKey }}
+                    path: session_token
+                  {{- end }}
+            - name: work
+              emptyDir:
+                sizeLimit: {{ .Values.workspace.sizeLimit }}
             {{- with .Values.volumes }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
