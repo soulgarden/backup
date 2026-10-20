@@ -25,3 +25,6 @@ coverage.xml
 htmlcov/
 .venv/
 artifacts/
+bin/
+coverage.out
+!tests/fixture.sql

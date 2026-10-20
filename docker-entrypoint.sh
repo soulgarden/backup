@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-exec python -m backup.runner "$@"
+exec /usr/local/bin/backup "$@"

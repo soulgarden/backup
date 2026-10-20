@@ -1,7 +1,10 @@
 **
 !Dockerfile
-!requirements.txt
+!go.mod
+!go.sum
 !VERSION
-!backup
-!backup/**
-backup/**/__pycache__/
+!config.example.json
+!cmd
+!cmd/**
+!internal
+!internal/**

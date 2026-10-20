@@ -1,5 +1,0 @@
--r requirements.txt
-pytest==8.4.2
-pytest-cov==7.0.0
-moto[s3,server]==5.1.15
-PyYAML==6.0.3

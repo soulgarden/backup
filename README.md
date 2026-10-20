@@ -6,7 +6,7 @@ as a bounded stream to verify byte count and SHA-256. Publishes and reads back
 `manifest.json` only after those checks. No SQL restore is performed or claimed.
 
 Configuration is versioned JSON (`config.example.json`, strict schema in
-`backup/config.schema.json`). Helm renders arrays without shell interpolation.
+`internal/backup/config.schema.json`). Helm renders arrays without shell interpolation.
 PGHOST/PGPORT/PGUSER/PGDATABASE/PGPASSWORD provide the source connection.
 S3 credentials are read only from `/credentials/access_key`, `secret_key` and
 optional `session_token`; SDK credential discovery is not used. Exceptions never
@@ -22,15 +22,18 @@ conflicting exclude-data policies fail validation. No row-count scans are used.
 
 ## Local checks
 
-Create a venv; `pip install -r requirements-dev.txt`, `make lint test`,
-`python scripts/check_charts.py`. `make build` builds without publishing.
-`make integration` uses disposable PostgreSQL16 and Moto containers, creates only
-synthetic source rows and runs no SQL restores. Resource reports include synthetic archive size, Python peak RSS
-and workspace usage under a 384MiB container limit. `python scripts/test_logalert.py`
-checks the exact logalert query in isolated Elasticsearch with a mock sender.
-`python scripts/check_charts.py --ci-root /path/to/ci-worktree` compares both charts.
-The tests exercise real image tools, corrupt archives, multipart abort, pagination,
-read-only non-root execution and SIGTERM while pg_dump waits on a lock.
+The runner is Go 1.27.2 with the AWS SDK for Go v2. The final image contains the
+compiled runner and PostgreSQL client tools; Python is not installed.
+
+Run `make lint test test-race vet build`. `make image` builds without publishing.
+`make integration` creates disposable PostgreSQL16/Moto fixtures and runs native
+Go integration tests; SQL is never restored. `scripts/logalert.sh` uses an isolated
+Elasticsearch and mock sender. `scripts/client-matrix.sh` checks actual PG17/18
+clients are rejected. `BACKUP_CI_CHART=/path/to/ci/helm/backup go test
+./internal/backup -run TestCharts -count=1` checks both charts together.
+
+Go coverage must be at least 90% of statements in the backup package, together
+with explicit failure/cancellation assertions.
 
 ## Completion and recovery runbook
 
@@ -68,9 +71,9 @@ the completed backup remains valid. S3 availability can change after verificatio
 
 Both charts initially suspend the new CronJob. Before activation:
 
-1. Run all checks against the exact image. Run `scripts/provider_contract.py` in
+1. Run all checks against the exact image. Run `backup -mode contract` in
    that image against a dedicated `backup-fixture-*` DigitalOcean AMS3 bucket.
-   The harness rejects production bucket names and requires sanitized provider
+   The contract command rejects production bucket names and requires sanitized provider
    evidence `{bucket, limited_access:true, access:"Read/Write/Delete"}`. It tests
    single/multipart upload, full SHA, >1000-key pagination, GetBucketVersioning,
    denied LIST on a separate provisioned `backup-fixture-*` canary bucket,
@@ -87,12 +90,20 @@ Both charts initially suspend the new CronJob. Before activation:
    evidence and set deletionApproved=true. No bucket-wide expiry or automatic
    versioning is applied. Legacy deletion is a later independent opt-in.
 
-Release version comes from VERSION; the release workflow requires a matching
-vVERSION tag and protected `backup-release` environment. Configure limited
-DockerHub publish credentials and separate Spaces fixture credentials/evidence.
-The same locally tested image is pushed without rebuilding, with commit/digest
-reports. Production charts must receive that digest in a separate rollout change.
-Do not deploy a draft suspended chart over a running production schedule.
+Release version comes from VERSION. One `.github/workflows/main.yml` runs checks
+for PRs and pushes to the single primary branch, `main`. Publication runs only
+on pushes to `main`, after checks and integration tests. The tested image is
+transferred as an artifact and published without rebuilding.
+
+The protected `backup-release` environment needs
+DOCKER_HUB_USERNAME/DOCKER_HUB_ACCESS_TOKEN and separate Spaces fixture
+credentials/evidence. The native `-mode contract` command runs from the tested
+image via `scripts/provider-contract.sh`; workflow files contain no inline Python.
+Existing version tags and ambiguous registry responses block publication. No
+latest tag is overwritten. Production charts receive the published digest in a
+separate rollout change. Do not deploy a draft suspended chart over a running
+production schedule. `backup -mode verify-lifecycle -report /work/lifecycle.json`
+reads back the required prefix-scoped lifecycle rule without changing it.
 
 The CI chart migrates encrypted SOPS values to s3.accessKey/secretKey/sessionToken.
 It generates SDK and PostgreSQL Secrets and retains `backup-config` (.s3cfg and

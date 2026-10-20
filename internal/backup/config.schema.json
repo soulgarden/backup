@@ -285,7 +285,8 @@
         },
         "maxAgeDays": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 36500
         },
         "keepLast": {
           "type": "integer",
@@ -293,7 +294,8 @@
         },
         "incompleteRunMaxAgeDays": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 36500
         },
         "legacy": {
           "type": "object",

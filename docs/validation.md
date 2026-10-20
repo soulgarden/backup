@@ -1,48 +1,58 @@
-# Validation record — 2026-10-20
+# Go implementation validation
 
-Scope: local implementation in separate service and CI worktrees. No production
-changes, image publication, SQL restore, real backup deletion or notifications.
+The runner and contracts now use Go 1.27.2 and AWS SDK for Go v2. The final image
+contains a compiled executable, CA certificates and PostgreSQL client tools.
+Source workflows contain no inline Python. Native Go tests and small shell
+wrappers replace the earlier application and test scripts.
 
-- 120 local unit/storage tests passed; own runner branch coverage 98.04%.
-- Real PG17/PG18 image tools were each rejected by the PG16 preflight;
-  both pg_dump and pg_restore were exercised independently.
-- Both Helm backup charts passed lint, configuration schema, escaping, security,
-  digest override and version conformance checks.
-- Observability chart lint and promtool validation passed for all eight rules.
-  Rule tests cover fresh/stale/critical, missing/no-success, suspended, active
-  long-running and failed owned Jobs.
-- Real image PG16.15 tools created/read custom archives. Source fixtures include
-  schema/table names with spaces, quotes/Unicode/newlines, partitions, ACL, large
-  objects, pgcrypto, identity sequence, index and foreign key. Empty DB passes
-  general policy and fails required-object policy. No SQL is restored.
-- A valid TOC with truncated archive data fails full pg_restore reading.
-- S3 emulator tests passed multipart, HEAD/full GET SHA, 1001-key pagination,
-  actual abort after injected failure and SIGTERM during blocked upload workers.
-- Non-root UID10001, read-only container, dropped capabilities, 384MiB memory
-  limit and bounded PG process-group shutdown passed. Synthetic archive:
-  47,779,261 bytes; streaming test object: 100,663,296 bytes. Test workspace peak:
-  290,907,526 bytes (several intentionally retained fixtures); Python RSS peak:
-  157,160 KiB. Production sizing still requires measurement.
-- Exact existing logalert query matched both ERROR events in isolated
-  Elasticsearch8.15.5 and a mock sender. No external notification was sent.
-- SOPS encrypted credential migration round-tripped and both SDK/rollback Secret
-  renders matched canonical credentials in memory. ConfigMap contains no keys.
-- DockerHub confirmed 0.2.0 was unpublished; release repeats the check and refuses
-  existing tags or ambiguous/network responses.
+Local checks:
 
-Independent agent review found and verified fixes for swallowed cancellation,
-MPU worker shutdown delaying abort, missing tag overwrite protection, missing
-negative key-scope canary and version wiring. Final review reported no open P1/P2
-runtime defects; the requested sequence/index/FK/empty-DB fixtures were then added.
+- `make lint test test-race vet build`: formatting, statement coverage gate for `internal/backup`
+  (at least 90%; current local result90.3%), race detector, vet, native build, Helm/schema/version checks.
+- `scripts/integration.sh`: PG16 custom archives and complete read-to-/dev/null,
+  schema filters, partition leaves, ACL/large objects, quoted/Unicode/newline
+  names, sequence/index/FK, valid empty DB and rejected required-object profile.
+  Corruption after a valid TOC and failed/partial pg_dump are rejected.
+- S3 Go SDK HTTP fixtures: failed and interrupted GET with clean hash reset,
+  strict/duplicate-key manifest rejection, uncertain PUT confirmation,
+  multipart failure and cancelled workers with actual abort requests, complete
+  pagination and malformed metadata refusal before any DELETE.
+- Retention fixtures cover 365 UTC days (strict boundary), latest seven/current
+  protection, unknown/future/corrupt markers, dry-run, incomplete runs, versioning,
+  36500-day overflow bound and legacy isolation from managed v2 objects.
+- `scripts/logalert.sh`: exact existing query in isolated Elasticsearch8.15.5
+  and mock delivery; no external notifications.
+- `scripts/client-matrix.sh`: actual PG17/18 tools must each fail PG16 preflight.
+- `go test -run TestCharts`: primary branch/version wiring and both Helm chart
+  contracts when BACKUP_CI_CHART is set. Observability promtool rules remain in
+  the separate CI worktree.
 
-Release gates remain incomplete: DigitalOcean dedicated fixture contract report,
+The integration harness compares the runner binary hash and exact pg_dump /
+pg_restore versions in the runtime and fixture images. The image tested for PID1
+shutdown is the same image later transferred as an artifact for publication.
+The percentage excludes cmd/backup and does not measure branches; entrypoint
+behavior is checked separately by CLI/PID1 integration. Native reports include archive/object size, peak RSS and workspace
+usage. Current run results are retained in ignored `artifacts/` and test logs;
+Python-era measurements are superseded, not reused as Go evidence.
+
+Final synthetic run under a 256MiB container limit: archive 47,779,526 bytes; streaming object 100,663,296 bytes; peak RSS 71,968 KiB; peak workspace 290,908,593 bytes. A real uploaded MPU part was aborted after cancellation and Moto reported no remaining uploads. PID1 shutdown returned143 without a completed manifest. PG17/18 matrix and the exact ES query both passed.
+
+Independent agent review found and corrected duration overflow, malformed S3
+listing metadata and legacy prefixes bypassing the protected reserve. The Go
+provider contract uploads a real 5MiB MPU part before abort and records SDK
+versions and checksum settings.
+
+A single main.yml checks PRs and pushes to main; publication is main-only after
+checks and a protected provider contract gate. DockerHub secrets match the local
+upload/logalert conventions. Existing version tags cannot be overwritten.
+
+External release gates remain: DigitalOcean dedicated fixture contract report,
 provider-side production key scope evidence, prefix lifecycle read-back, published
-immutable digest, deployment preflight, controlled first production run and
-retention dry-run review. `suspend: true` and retention dryRun preserve that boundary.
+immutable digest, deployment preflight, controlled first run and retention dry-run
+review. CronJob remains suspended and retention remains dry-run. No production
+changes, publication or SQL restoration were performed during this implementation.
 
-Repository-wide `make swup-lint observability-lint` cannot complete in the clean CI
-worktree: it stops at unrelated `helm/redis/secrets.values.yaml.dec`, absent by
-design. All changed charts were linted directly. Existing repository-wide secret
-checks report unrelated older potential plaintext files; the changed backup
-Secret remains encrypted and was verified separately. No unrelated files were
-modified or removed to bypass these checks.
+Repository-wide aggregate lint in the isolated CI worktree requires unrelated
+decrypted Redis values. Changed charts are linted directly. Existing repository
+secret scans report unrelated older potential plaintext files; the backup Secret
+remains encrypted. No unrelated files were changed to bypass those checks.

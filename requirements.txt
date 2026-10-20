@@ -1,4 +1,0 @@
-boto3==1.40.56
-botocore==1.40.56
-s3transfer==0.14.0
-jsonschema==4.25.1
