@@ -1,5 +1,10 @@
-# Only runtime inputs belong in the build context.
 **
 !Dockerfile
-!docker-entrypoint.sh
-!.s3cfg.example
+!go.mod
+!go.sum
+!VERSION
+!config.example.json
+!cmd
+!cmd/**
+!internal
+!internal/**

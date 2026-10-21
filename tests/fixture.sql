@@ -1,0 +1,20 @@
+CREATE TABLE public."partition root" (id int, value text) PARTITION BY RANGE(id);
+CREATE TABLE public."leaf one" PARTITION OF public."partition root" FOR VALUES FROM (0) TO (100000);
+INSERT INTO public."partition root" SELECT n, md5(n::text) FROM generate_series(1,40000) n;
+CREATE SCHEMA "work schema";
+CREATE TABLE "work schema"."quote space.雪"(id int);
+CREATE TABLE "work schema"."new
+line"(id int);
+CREATE SCHEMA release_archive_fixture;
+CREATE TABLE release_archive_fixture.old(id int);
+CREATE ROLE fixture_reader;
+GRANT SELECT ON public."partition root" TO fixture_reader;
+SELECT lo_create(50000);
+CREATE TABLE public.parent (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
+INSERT INTO public.parent DEFAULT VALUES;
+CREATE TABLE public.child_ref (parent_id int REFERENCES public.parent(id));
+CREATE INDEX child_ref_parent_idx ON public.child_ref(parent_id);
+INSERT INTO public.child_ref VALUES (1);
+CREATE DATABASE fixture_empty;
+CREATE EXTENSION pgcrypto;
+CREATE TABLE public.payload AS SELECT n, encode(gen_random_bytes(1024),'hex') value FROM generate_series(1,40000) n;

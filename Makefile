@@ -2,34 +2,44 @@
 
 DOCKER ?= docker
 HELM ?= helm
+GO ?= go
 IMAGE ?= soulgarden/backup
-VERSION ?= $(shell sed -n 's/^appVersion: "\(.*\)"/\1/p' helm/backup/Chart.yaml)
+VERSION := $(shell cat VERSION)
 PLATFORM ?= linux/amd64
 POSTGRES_MAJOR ?= 16
-ENV_FILE ?= .env
-S3_CONFIG ?= $(CURDIR)/.s3cfg.local
 IMAGE_TAG := $(IMAGE):$(VERSION)
-
-.PHONY: help build push run lint
+.PHONY: help build image push test test-race integration lint vet helm-validate
 
 help: ## Show available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-build: ## Build the image locally
-	$(DOCKER) build --pull --platform "$(PLATFORM)" \
-		--build-arg POSTGRES_MAJOR="$(POSTGRES_MAJOR)" --tag "$(IMAGE_TAG)" .
+build: ## Build the Go executable
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/backup ./cmd/backup
 
-push: ## Push an already built image
+image: ## Build image without publishing
+	$(DOCKER) build --platform "$(PLATFORM)" --build-arg POSTGRES_MAJOR="$(POSTGRES_MAJOR)" --tag "$(IMAGE_TAG)" .
+
+push: ## Explicitly publish the tested local image
 	$(DOCKER) push "$(IMAGE_TAG)"
 
-run: ## Run a backup using .env and .s3cfg.local
-	@test -f "$(ENV_FILE)" || { echo "Missing $(ENV_FILE)" >&2; exit 1; }
-	@test -f "$(S3_CONFIG)" || { echo "Missing $(S3_CONFIG)" >&2; exit 1; }
-	$(DOCKER) run --rm --platform "$(PLATFORM)" --user "$$(id -u):$$(id -g)" \
-		--env-file "$(ENV_FILE)" \
-		--mount "type=bind,source=$(S3_CONFIG),target=/home/backup/.s3cfg,readonly" \
-		"$(IMAGE_TAG)"
+test: ## Go tests with coverage
+	$(GO) test -coverprofile=coverage.out ./internal/backup
+	$(GO) tool cover -func=coverage.out
+	@$(GO) tool cover -func=coverage.out | awk '/total:/ {gsub(/%/, "", $$3); if ($$3 < 90) exit 1}'
+	$(GO) test ./cmd/backup
 
-lint: ## Check shell syntax and the Helm chart
-	sh -n docker-entrypoint.sh
+test-race: ## Detect data races
+	$(GO) test -race ./...
+
+vet: ## Go static checks
+	$(GO) vet ./...
+
+integration: ## Synthetic PG16/S3 and PID1 checks
+	IMAGE="$(IMAGE_TAG)" scripts/integration.sh
+
+lint: ## Check Go formatting
+	@test -z "$$(gofmt -l cmd internal)"
+
+helm-validate: ## Lint and render chart; validate configuration and safety gates
 	$(HELM) lint --strict helm/backup
+	HELM="$(HELM)" $(GO) test ./internal/backup -run '^TestChart' -count=1

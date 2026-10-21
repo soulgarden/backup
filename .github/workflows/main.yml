@@ -1,0 +1,121 @@
+name: Lint, test and build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.19.0
+      - name: Validate Helm chart
+        run: make helm-validate
+      - name: Check Go code
+        run: make lint test test-race vet build
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-buildx-action@v4.4.1
+      - name: Build testable image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: backup-tested:${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Test PostgreSQL, S3 and signals
+        run: IMAGE=backup-tested:${{ github.sha }} scripts/integration.sh
+      - run: scripts/logalert.sh
+      - run: scripts/client-matrix.sh
+      - name: Check whether this version needs publication
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: scripts/check-unpublished.sh --if-needed >> "$GITHUB_OUTPUT"
+      - name: Save tested image
+        if: steps.version.outputs.publish == 'true'
+        run: docker save backup-tested:${{ github.sha }} | gzip > tested-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.publish == 'true'
+        with:
+          name: tested-image-${{ github.sha }}
+          path: tested-image.tar.gz
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-checks-${{ github.sha }}
+          path: artifacts/
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.outputs.publish == 'true'
+    environment: backup-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-image-${{ github.sha }}
+      - name: Load the tested image
+        run: |
+          gunzip -c tested-image.tar.gz | docker load
+          docker tag backup-tested:${{ github.sha }} "soulgarden/backup:$(cat VERSION)"
+          scripts/check-unpublished.sh
+      - name: Check DigitalOcean contract
+        env:
+          FIXTURE_BUCKET: ${{ vars.SPACES_FIXTURE_BUCKET }}
+          FIXTURE_CANARY_BUCKET: ${{ vars.SPACES_FIXTURE_CANARY_BUCKET }}
+          SCOPE_EVIDENCE: ${{ vars.SPACES_FIXTURE_SCOPE_EVIDENCE }}
+          FIXTURE_ACCESS_KEY: ${{ secrets.SPACES_FIXTURE_ACCESS_KEY }}
+          FIXTURE_SECRET_KEY: ${{ secrets.SPACES_FIXTURE_SECRET_KEY }}
+        run: IMAGE="soulgarden/backup:$(cat VERSION)" scripts/provider-contract.sh
+      - uses: docker/login-action@v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+      - name: Publish the same tested image
+        run: |
+          scripts/check-unpublished.sh
+          image="soulgarden/backup:$(cat VERSION)"
+          docker push "$image"
+          docker image inspect "$image" --format '{{json .RepoDigests}}' > artifacts/published-digest.json
+          git rev-parse HEAD > artifacts/commit.txt
+          cp VERSION artifacts/VERSION
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: artifacts/

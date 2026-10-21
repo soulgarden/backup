@@ -1,7 +1,3 @@
-Inspect the scheduled backup:
-  kubectl --namespace {{ .Release.Namespace }} get cronjob {{ include "backup.fullname" . }}
-
-Run a backup manually:
-  kubectl --namespace {{ .Release.Namespace }} create job --from=cronjob/{{ include "backup.fullname" . }} {{ include "backup.fullname" . | trunc 40 | trimSuffix "-" }}-manual-$(date +%s)
-
-Only the public schema is included in each dump.
+Backups use custom PostgreSQL archives with a verified manifest.
+Review release gates and README.md before activating the CronJob.
+Retention dryRun={{ .Values.retention.dryRun }}; maxAgeDays={{ .Values.retention.maxAgeDays }}.

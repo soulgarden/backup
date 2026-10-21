@@ -18,3 +18,15 @@ graphify-out/
 .vscode/
 *.iml
 .DS_Store
+__pycache__/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+artifacts/
+bin/
+coverage.out
+!tests/fixture.sql
+
+!internal/backup/inventory.sql
