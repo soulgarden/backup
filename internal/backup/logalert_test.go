@@ -76,18 +76,18 @@ func TestLogalertContract(t *testing.T) {
 		call(
 			"PUT",
 			fmt.Sprintf("%s/_doc/%d", index, n),
-			map[string]string{"namespace": "swup", "message": line.String()},
+			map[string]string{"namespace": "example", "message": line.String()},
 		)
 	}
 
 	call(
 		"PUT",
 		index+"/_doc/2",
-		map[string]string{"namespace": "kino", "message": "ERROR backup_retention_failed"},
+		map[string]string{"namespace": "other", "message": "ERROR backup_retention_failed"},
 	)
-	call("PUT", index+"/_doc/3", map[string]string{"namespace": "swup", "message": "INFO normal completion"})
+	call("PUT", index+"/_doc/3", map[string]string{"namespace": "example", "message": "INFO normal completion"})
 	call("POST", index+"/_refresh", nil)
-	const query = "namespace:swup AND (message:error OR message:fatal OR message:panic OR message:critical) AND NOT (message:warn OR message:warning OR message:info OR message:debug)"
+	const query = "namespace:example AND (message:error OR message:fatal OR message:panic OR message:critical) AND NOT (message:warn OR message:warning OR message:info OR message:debug)"
 	result := call(
 		"POST",
 		index+"/_search",
