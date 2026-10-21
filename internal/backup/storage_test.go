@@ -589,10 +589,12 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 	} else {
 		raw, readErr := os.ReadFile(report)
 		var result struct {
-			Status  string   `json:"status"`
-			Keys    []string `json:"owned_keys"`
-			Cleanup bool     `json:"cleanup_complete"`
-			AbortID string   `json:"abort_upload_id"`
+			Status     string   `json:"status"`
+			Keys       []string `json:"owned_keys"`
+			Cleanup    bool     `json:"cleanup_complete"`
+			AbortID    string   `json:"abort_upload_id"`
+			Operation  string   `json:"failed_operation"`
+			HTTPStatus int      `json:"http_status"`
 		}
 		if readErr != nil || json.Unmarshal(raw, &result) != nil ||
 			result.Status != "failed" || len(result.Keys) != 1003 || result.Cleanup != (mode != "abort_failure") {
@@ -600,6 +602,10 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 		}
 		if mode == "abort_failure" && result.AbortID == "" {
 			t.Fatal("missing incomplete upload ID")
+		}
+		if (mode == "put_failure" || mode == "abort_failure") &&
+			(result.HTTPStatus != 403 || result.Operation == "") {
+			t.Fatal("missing sanitized failure category")
 		}
 	}
 

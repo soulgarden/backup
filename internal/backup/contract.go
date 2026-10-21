@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,7 +33,7 @@ type ContractOptions struct {
 
 const ContractCleanupTimeout = 5 * time.Minute
 
-func ProviderContract(ctx context.Context, store *S3Store, options ContractOptions, reportPath string) error {
+func ProviderContract(ctx context.Context, store *S3Store, options ContractOptions, reportPath string) (resultErr error) {
 	bucket := store.Config.Bucket
 	if err := writeReport(reportPath, map[string]any{
 		"status":         "preflight",
@@ -154,6 +155,16 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 			_ = cleanup()
 			journal["status"] = "failed"
 			journal["cleanup_complete"] = cleanupErr == nil
+			var operation *smithy.OperationError
+			if errors.As(resultErr, &operation) {
+				journal["failed_operation"] = operation.OperationName
+			}
+			var status interface{ HTTPStatusCode() int }
+			if errors.As(resultErr, &status) {
+				journal["http_status"] = status.HTTPStatusCode()
+			}
+			var network net.Error
+			journal["network_timeout"] = errors.As(resultErr, &network) && network.Timeout()
 			_ = writeReport(reportPath, journal)
 		}
 	}()
