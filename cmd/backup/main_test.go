@@ -9,10 +9,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/soulgarden/backup/internal/backup"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+func TestContractShutdownBudget(t *testing.T) {
+	if shutdownGrace("contract", 5) <= backup.ContractCleanupTimeout {
+		t.Fatal("contract watchdog interrupts cleanup")
+	}
+	for _, command := range []string{"backup", "verify-lifecycle"} {
+		if shutdownGrace(command, 45) != 45*time.Second {
+			t.Fatal("normal shutdown budget changed")
+		}
+	}
+}
 
 func TestPathPrecedence(t *testing.T) {
 	for _, tc := range []struct {
@@ -45,6 +58,16 @@ func TestPathPrecedence(t *testing.T) {
 			env:  true,
 			args: []string{"verify-lifecycle", "--config", "flag-config"},
 			want: []string{"flag-config", "env-credentials", "env-workspace"},
+		},
+		{
+			name: "contract uses configured paths",
+			args: []string{"contract"},
+			want: []string{"/config/config.json", "/credentials", "/work"},
+		},
+		{
+			name: "contract dry run",
+			args: []string{"contract", "--dry-run"},
+			want: []string{"/config/config.json", "/credentials", "/work"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +112,7 @@ func TestHelpAndVersion(t *testing.T) {
 	}{
 		{[]string{"--help"}, "Create and verify a PostgreSQL archive"},
 		{[]string{"--version"}, version},
-		{[]string{"contract", "--help"}, "--canary-bucket"},
+		{[]string{"contract", "--help"}, "--dry-run"},
 		{[]string{"verify-lifecycle", "--help"}, "--report"},
 	} {
 		var output bytes.Buffer
@@ -106,8 +129,8 @@ func TestInvalidArgumentsAreSanitized(t *testing.T) {
 	for _, args := range [][]string{
 		{"--unknown=secret-value"},
 		{"secret-value"},
-		{"contract"},
-		{"contract", "--canary-bucket", "secret-value"},
+		{"contract", "secret-value"},
+		{"contract", "--dry-run=secret-value"},
 		{"verify-lifecycle", "secret-value"},
 		{"--config"},
 	} {
@@ -145,7 +168,7 @@ func TestSetupAndContractFailures(t *testing.T) {
 		{[]string{"--workspace", filepath.Join(dir, "secret-value")}, "INVALID_SETUP"},
 		{nil, "STAGE_FAILED"},
 		{
-			[]string{"contract", "--canary-bucket", "invalid", "--scope-evidence", "secret-value"},
+			[]string{"contract", "--report", filepath.Join(dir, "missing", "report.json")},
 			"CONTRACT_FAILED",
 		},
 	} {

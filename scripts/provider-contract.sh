@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-umask 077
-printf '%s' "${FIXTURE_ACCESS_KEY:?}" > "$work/access_key"
-printf '%s' "${FIXTURE_SECRET_KEY:?}" > "$work/secret_key"
-printf '%s' "${SCOPE_EVIDENCE:?}" > "$work/scope.json"
-# Non-root image may read only these transient test credentials.
-chmod 755 "$work"
-chmod 444 "$work/access_key" "$work/secret_key" "$work/scope.json"
-# Chart/JSON fixture profile contains no credentials or production bucket names.
-jq --arg bucket "${FIXTURE_BUCKET:?}" '.s3.bucket=$bucket' config.example.json > "$work/config.json"
-chmod 444 "$work/config.json"
+config=$(realpath "${BACKUP_CONFIG:?}")
+credentials=$(realpath "${S3_CREDENTIALS_DIR:?}")
+bucket=$(jq -er '.s3.bucket' "$config")
 mkdir -p artifacts
-chmod 777 artifacts
-docker run --rm --mount "type=bind,src=$work,dst=/credentials,readonly" \
-  --mount "type=bind,src=$work/config.json,dst=/config/config.json,readonly" \
+report="artifacts/provider-${bucket}.json"
+if test -f "$report"; then
+  mv "$report" "${report%.json}.previous-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
+fi
+image_id=$(docker image inspect "${IMAGE:?}" --format '{{.Id}}')
+image_revision=$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+workspace_dirty=false
+if test -n "$(git status --porcelain --untracked-files=no)"; then workspace_dirty=true; fi
+workspace_head=$(git rev-parse HEAD)
+docker run --rm --stop-timeout 330 --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$credentials,dst=/credentials,readonly" \
+  --mount "type=bind,src=$config,dst=/config/config.json,readonly" \
   --mount "type=bind,src=$PWD/artifacts,dst=/reports" "${IMAGE:?}" \
-  contract --canary-bucket "${FIXTURE_CANARY_BUCKET:?}" \
-  --scope-evidence /credentials/scope.json --report /reports/provider.json
+  contract "$@" --report "/reports/provider-${bucket}.json"
+jq --arg image "$IMAGE" --arg image_id "$image_id" --arg revision "$image_revision" \
+  --arg head "$workspace_head" --argjson dirty "$workspace_dirty" \
+  '. + {image_reference:$image,image_id:$image_id,image_revision:$revision,workspace_head:$head,workspace_dirty:$dirty}' \
+  "$report" > "$work/report.json"
+mv "$work/report.json" "$report"

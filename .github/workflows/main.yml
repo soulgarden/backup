@@ -94,14 +94,6 @@ jobs:
           gunzip -c tested-image.tar.gz | docker load
           docker tag backup-tested:${{ github.sha }} "soulgarden/backup:$(cat VERSION)"
           scripts/check-unpublished.sh
-      - name: Check DigitalOcean contract
-        env:
-          FIXTURE_BUCKET: ${{ vars.SPACES_FIXTURE_BUCKET }}
-          FIXTURE_CANARY_BUCKET: ${{ vars.SPACES_FIXTURE_CANARY_BUCKET }}
-          SCOPE_EVIDENCE: ${{ vars.SPACES_FIXTURE_SCOPE_EVIDENCE }}
-          FIXTURE_ACCESS_KEY: ${{ secrets.SPACES_FIXTURE_ACCESS_KEY }}
-          FIXTURE_SECRET_KEY: ${{ secrets.SPACES_FIXTURE_SECRET_KEY }}
-        run: IMAGE="soulgarden/backup:$(cat VERSION)" scripts/provider-contract.sh
       - uses: docker/login-action@v4.6.0
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
