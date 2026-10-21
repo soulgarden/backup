@@ -25,7 +25,10 @@ jobs:
       - uses: azure/setup-helm@v4.3.0
         with:
           version: v3.19.0
-      - run: make lint test test-race vet build
+      - name: Validate Helm chart
+        run: make helm-validate
+      - name: Check Go code
+        run: make lint test test-race vet build
 
   build:
     needs: checks

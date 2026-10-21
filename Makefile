@@ -1,4 +1,5 @@
 .DEFAULT_GOAL := help
+
 DOCKER ?= docker
 HELM ?= helm
 GO ?= go
@@ -7,15 +8,20 @@ VERSION := $(shell cat VERSION)
 PLATFORM ?= linux/amd64
 POSTGRES_MAJOR ?= 16
 IMAGE_TAG := $(IMAGE):$(VERSION)
-.PHONY: help build image push test test-race integration lint vet
+.PHONY: help build image push test test-race integration lint vet helm-validate
+
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
 build: ## Build the Go executable
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/backup ./cmd/backup
+
 image: ## Build image without publishing
 	$(DOCKER) build --platform "$(PLATFORM)" --build-arg POSTGRES_MAJOR="$(POSTGRES_MAJOR)" --tag "$(IMAGE_TAG)" .
+
 push: ## Explicitly publish the tested local image
 	$(DOCKER) push "$(IMAGE_TAG)"
+
 test: ## Go tests with coverage
 	$(GO) test -coverprofile=coverage.out ./internal/backup
 	$(GO) tool cover -func=coverage.out
@@ -24,10 +30,16 @@ test: ## Go tests with coverage
 
 test-race: ## Detect data races
 	$(GO) test -race ./...
+
 vet: ## Go static checks
 	$(GO) vet ./...
+
 integration: ## Synthetic PG16/S3 and PID1 checks
 	IMAGE="$(IMAGE_TAG)" scripts/integration.sh
-lint: ## Formatting and chart validation
+
+lint: ## Check Go formatting
 	@test -z "$$(gofmt -l cmd internal)"
+
+helm-validate: ## Lint and render chart; validate configuration and safety gates
 	$(HELM) lint --strict helm/backup
+	HELM="$(HELM)" $(GO) test ./internal/backup -run '^TestChart' -count=1

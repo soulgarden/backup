@@ -32,6 +32,7 @@ func testS3(t *testing.T, handler http.HandlerFunc) *S3Store {
 	c.MultipartChunkSizeMiB = 5
 	return NewS3(c, Credentials{"fixture", "fixture", ""})
 }
+
 func TestS3VerifyAndManifest(t *testing.T) {
 	data := []byte("data")
 	h := sha256.Sum256(data)
@@ -45,9 +46,11 @@ func TestS3VerifyAndManifest(t *testing.T) {
 					if mode == "head" {
 						n = 5
 					}
+
 					w.Header().Set("Content-Length", fmt.Sprint(n))
 					return
 				}
+
 				body := data
 				switch mode {
 				case "short":
@@ -57,6 +60,7 @@ func TestS3VerifyAndManifest(t *testing.T) {
 				case "hash":
 					body = []byte("evil")
 				}
+
 				_, _ = w.Write(body)
 			})
 			c, cancel := context.WithCancel(ctx)
@@ -64,12 +68,14 @@ func TestS3VerifyAndManifest(t *testing.T) {
 			if mode == "cancel" {
 				cancel()
 			}
+
 			err := s.Verify(c, "key", 4, sha)
 			if (err == nil) != (mode == "ok") {
 				t.Fatal(err)
 			}
 		})
 	}
+
 	for _, mode := range []string{"match", "mismatch", "duplicate", "wrong_bool", "huge", "uncertain", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			c := fixtureConfig(t)
@@ -82,23 +88,33 @@ func TestS3VerifyAndManifest(t *testing.T) {
 						w.WriteHeader(500)
 						return
 					}
+
 					_, _ = io.Copy(io.Discard, r.Body)
 					return
 				}
+
 				if mode == "huge" {
 					w.Header().Set("Content-Length", "1048577")
 					return
 				}
+
 				body := raw
 				if mode == "mismatch" {
 					body = bytes.ReplaceAll(raw, []byte("fixture"), []byte("other"))
 				}
+
 				if mode == "duplicate" {
 					body = append([]byte(`{"format_version":2,`), raw[1:]...)
 				}
+
 				if mode == "wrong_bool" {
-					body = bytes.ReplaceAll(raw, []byte(`"database_restore_tested":false`), []byte(`"database_restore_tested":0`))
+					body = bytes.ReplaceAll(
+						raw,
+						[]byte(`"database_restore_tested":false`),
+						[]byte(`"database_restore_tested":0`),
+					)
 				}
+
 				_, _ = w.Write(body)
 			})
 			request, cancel := context.WithCancel(ctx)
@@ -106,6 +122,7 @@ func TestS3VerifyAndManifest(t *testing.T) {
 			if mode == "cancel" {
 				cancel()
 			}
+
 			err := client.Publish(request, "marker", m)
 			if (err == nil) != (mode == "match" || mode == "uncertain") {
 				t.Fatal(mode, err)
@@ -113,6 +130,7 @@ func TestS3VerifyAndManifest(t *testing.T) {
 		})
 	}
 }
+
 func TestS3Operations(t *testing.T) {
 	ctx := context.Background()
 	for _, mode := range []string{"missing", "denied", "present"} {
@@ -133,6 +151,7 @@ func TestS3Operations(t *testing.T) {
 			}
 		})
 	}
+
 	for _, mode := range []string{"pages", "missing_token", "repeated_token", "second_failure"} {
 		t.Run(mode, func(t *testing.T) {
 			page := 0
@@ -143,12 +162,22 @@ func TestS3Operations(t *testing.T) {
 					w.WriteHeader(403)
 					return
 				}
+
 				if mode == "missing_token" {
-					_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>`)
+					_, _ = io.WriteString(
+						w,
+						`<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>`,
+					)
 					return
 				}
+
 				truncated := page == 1 || mode == "repeated_token"
-				fmt.Fprintf(w, `<ListBucketResult><IsTruncated>%t</IsTruncated><NextContinuationToken>next</NextContinuationToken><Contents><Key>a/file%d</Key><Size>4</Size><LastModified>2026-10-20T00:00:00Z</LastModified></Contents></ListBucketResult>`, truncated, page)
+				fmt.Fprintf(
+					w,
+					`<ListBucketResult><IsTruncated>%t</IsTruncated><NextContinuationToken>next</NextContinuationToken><Contents><Key>a/file%d</Key><Size>4</Size><LastModified>2026-10-20T00:00:00Z</LastModified></Contents></ListBucketResult>`,
+					truncated,
+					page,
+				)
 			})
 			objects, err := s.List(ctx, "a/")
 			if mode == "pages" {
@@ -160,20 +189,27 @@ func TestS3Operations(t *testing.T) {
 			}
 		})
 	}
+
 	s := testS3(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "DELETE" {
 			w.WriteHeader(204)
 			return
 		}
-		_, _ = io.WriteString(w, `<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>`)
+
+		_, _ = io.WriteString(
+			w,
+			`<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>`,
+		)
 	})
 	if err := s.Delete(ctx, "key"); err != nil {
 		t.Fatal(err)
 	}
+
 	if version, err := s.Versioning(ctx); err != nil || version != "Suspended" {
 		t.Fatal(version, err)
 	}
 }
+
 func TestS3UploadAbort(t *testing.T) {
 	for _, mode := range []string{"single", "multipart", "part_failure", "complete_failure", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
@@ -186,7 +222,10 @@ func TestS3UploadAbort(t *testing.T) {
 				w.Header().Set("Content-Type", "application/xml")
 				switch {
 				case r.Method == "POST" && q.Has("uploads"):
-					_, _ = io.WriteString(w, `<InitiateMultipartUploadResult><UploadId>fixture</UploadId></InitiateMultipartUploadResult>`)
+					_, _ = io.WriteString(
+						w,
+						`<InitiateMultipartUploadResult><UploadId>fixture</UploadId></InitiateMultipartUploadResult>`,
+					)
 				case r.Method == "PUT" && q.Has("partNumber"):
 					once.Do(func() { close(started) })
 					if mode == "cancel" {
@@ -194,12 +233,15 @@ func TestS3UploadAbort(t *testing.T) {
 						case <-r.Context().Done():
 						case <-time.After(time.Second):
 						}
+
 						return
 					}
+
 					if mode == "part_failure" {
 						w.WriteHeader(403)
 						return
 					}
+
 					_, _ = io.Copy(io.Discard, r.Body)
 					w.Header().Set("ETag", `"part"`)
 				case r.Method == "POST" && q.Has("uploadId"):
@@ -207,7 +249,11 @@ func TestS3UploadAbort(t *testing.T) {
 						w.WriteHeader(403)
 						return
 					}
-					_, _ = io.WriteString(w, `<CompleteMultipartUploadResult><ETag>multipart</ETag></CompleteMultipartUploadResult>`)
+
+					_, _ = io.WriteString(
+						w,
+						`<CompleteMultipartUploadResult><ETag>multipart</ETag></CompleteMultipartUploadResult>`,
+					)
 				case r.Method == "DELETE":
 					mu.Lock()
 					aborted = true
@@ -223,19 +269,23 @@ func TestS3UploadAbort(t *testing.T) {
 			if mode != "single" {
 				size = 6 << 20
 			}
+
 			if err := os.WriteFile(path, make([]byte, size), 0600); err != nil {
 				t.Fatal(err)
 			}
+
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "cancel" {
 				go func() { <-started; cancel() }()
 			}
+
 			err := s.Upload(ctx, path, "archive")
 			failed := mode == "part_failure" || mode == "complete_failure" || mode == "cancel"
 			if (err != nil) != failed {
 				t.Fatal(mode, err)
 			}
+
 			mu.Lock()
 			got := aborted
 			mu.Unlock()
@@ -245,20 +295,28 @@ func TestS3UploadAbort(t *testing.T) {
 		})
 	}
 }
+
 func TestProviderGuards(t *testing.T) {
 	s := testS3(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) })
 	if ProviderContract(context.Background(), s, "backup-fixture-canary", "missing", "missing") == nil {
 		t.Fatal("production fixture accepted")
 	}
+
 	s.Config.Bucket = "backup-fixture-test"
 	if ProviderContract(context.Background(), s, s.Config.Bucket, "missing", "missing") == nil {
 		t.Fatal("same bucket")
 	}
+
 	path := filepath.Join(t.TempDir(), "scope")
-	_ = os.WriteFile(path, []byte(`{"bucket":"backup-fixture-test","access":"Read/Write/Delete","limited_access":false}`), 0600)
+	_ = os.WriteFile(
+		path,
+		[]byte(`{"bucket":"backup-fixture-test","access":"Read/Write/Delete","limited_access":false}`),
+		0600,
+	)
 	if ProviderContract(context.Background(), s, "backup-fixture-canary", path, "missing") == nil {
 		t.Fatal("wide key")
 	}
+
 	for _, mode := range []string{"valid", "wrong_prefix", "disabled", "tags"} {
 		t.Run(mode, func(t *testing.T) {
 			store := testS3(t, func(w http.ResponseWriter, r *http.Request) {
@@ -268,13 +326,22 @@ func TestProviderGuards(t *testing.T) {
 				if mode == "wrong_prefix" {
 					prefix = "other/"
 				}
+
 				if mode == "disabled" {
 					status = "Disabled"
 				}
+
 				if mode == "tags" {
 					tag = "<Tag><Key>a</Key><Value>b</Value></Tag>"
 				}
-				fmt.Fprintf(w, `<LifecycleConfiguration><Rule><ID>abort</ID><Status>%s</Status><Filter><Prefix>%s</Prefix>%s</Filter><AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload></Rule></LifecycleConfiguration>`, status, prefix, tag)
+
+				fmt.Fprintf(
+					w,
+					`<LifecycleConfiguration><Rule><ID>abort</ID><Status>%s</Status><Filter><Prefix>%s</Prefix>%s</Filter><AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload></Rule></LifecycleConfiguration>`,
+					status,
+					prefix,
+					tag,
+				)
 			})
 			err := VerifyLifecycle(context.Background(), store, filepath.Join(t.TempDir(), "report"))
 			if (err == nil) != (mode == "valid") {
@@ -297,6 +364,7 @@ func TestProviderContractHTTP(t *testing.T) {
 		if len(fields) == 2 {
 			key = fields[1]
 		}
+
 		q := r.URL.Query()
 		if bucket == "backup-fixture-canary" {
 			w.Header().Set("Content-Type", "application/xml")
@@ -304,6 +372,7 @@ func TestProviderContractHTTP(t *testing.T) {
 			_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
 			return
 		}
+
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/xml")
@@ -317,6 +386,7 @@ func TestProviderContractHTTP(t *testing.T) {
 					keys = append(keys, k)
 				}
 			}
+
 			sort.Strings(keys)
 			start, _ := strconv.Atoi(q.Get("continuation-token"))
 			end := min(start+1000, len(keys))
@@ -325,16 +395,27 @@ func TestProviderContractHTTP(t *testing.T) {
 			if end < len(keys) {
 				fmt.Fprintf(w, "<NextContinuationToken>%d</NextContinuationToken>", end)
 			}
+
 			for _, k := range keys[start:end] {
-				fmt.Fprintf(w, "<Contents><Key>%s</Key><Size>%d</Size><LastModified>2026-10-20T00:00:00Z</LastModified></Contents>", k, len(objects[k]))
+				fmt.Fprintf(
+					w,
+					"<Contents><Key>%s</Key><Size>%d</Size><LastModified>2026-10-20T00:00:00Z</LastModified></Contents>",
+					k,
+					len(objects[k]),
+				)
 			}
+
 			fmt.Fprint(w, `</ListBucketResult>`)
 		case r.Method == "POST" && q.Has("uploads"):
 			next++
 			id := strconv.Itoa(next)
 			parts[id] = map[int][]byte{}
 			uploads[id] = key
-			fmt.Fprintf(w, `<InitiateMultipartUploadResult><UploadId>%s</UploadId></InitiateMultipartUploadResult>`, id)
+			fmt.Fprintf(
+				w,
+				`<InitiateMultipartUploadResult><UploadId>%s</UploadId></InitiateMultipartUploadResult>`,
+				id,
+			)
 		case r.Method == "PUT" && q.Has("partNumber"):
 			raw, _ := io.ReadAll(r.Body)
 			number, _ := strconv.Atoi(q.Get("partNumber"))
@@ -346,15 +427,20 @@ func TestProviderContractHTTP(t *testing.T) {
 			for n := range parts[id] {
 				numbers = append(numbers, n)
 			}
+
 			sort.Ints(numbers)
 			var joined bytes.Buffer
 			for _, n := range numbers {
 				joined.Write(parts[id][n])
 			}
+
 			objects[key] = joined.Bytes()
 			delete(parts, id)
 			delete(uploads, id)
-			fmt.Fprint(w, `<CompleteMultipartUploadResult><ETag>multipart</ETag></CompleteMultipartUploadResult>`)
+			fmt.Fprint(
+				w,
+				`<CompleteMultipartUploadResult><ETag>multipart</ETag></CompleteMultipartUploadResult>`,
+			)
 		case r.Method == "DELETE" && q.Has("uploadId"):
 			delete(parts, q.Get("uploadId"))
 			delete(uploads, q.Get("uploadId"))
@@ -373,6 +459,7 @@ func TestProviderContractHTTP(t *testing.T) {
 				w.WriteHeader(404)
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 			if r.Method != "HEAD" {
@@ -386,14 +473,17 @@ func TestProviderContractHTTP(t *testing.T) {
 	if err := os.WriteFile(evidence, []byte(`{"bucket":"backup-fixture-contract","limited_access":true,"access":"Read/Write/Delete"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+
 	report := filepath.Join(dir, "report.json")
 	if err := ProviderContract(context.Background(), s, "backup-fixture-canary", evidence, report); err != nil {
 		t.Fatal(err)
 	}
+
 	raw, err := os.ReadFile(report)
 	if err != nil || !bytes.Contains(raw, []byte(`"fixture_cleanup": true`)) {
 		t.Fatal(string(raw), err)
 	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	if len(objects) != 0 || len(parts) != 0 || len(uploads) != 0 {
@@ -408,11 +498,13 @@ func TestGETRetryResetsHash(t *testing.T) {
 		if r.Method == "HEAD" {
 			return
 		}
+
 		gets++
 		if gets == 1 {
 			_, _ = io.WriteString(w, "da")
 			return
 		}
+
 		_, _ = io.WriteString(w, "data")
 	})
 	s.Config.TotalAttempts = 2
@@ -420,6 +512,7 @@ func TestGETRetryResetsHash(t *testing.T) {
 	if err := s.Verify(context.Background(), "key", 4, hex.EncodeToString(hash[:])); err != nil {
 		t.Fatal(err)
 	}
+
 	if gets != 2 {
 		t.Fatal(gets)
 	}
@@ -434,25 +527,32 @@ func TestStorageFailures(t *testing.T) {
 	if _, err := denied.Versioning(ctx); err == nil {
 		t.Fatal("versioning denied accepted")
 	}
+
 	if err := denied.Verify(ctx, "x", 4, "hash"); err == nil {
 		t.Fatal("HEAD denied")
 	}
+
 	if _, err := denied.ReadManifest(ctx, "x"); err == nil {
 		t.Fatal("GET denied")
 	}
+
 	if err := denied.Upload(ctx, "/missing", "x"); err == nil {
 		t.Fatal("file missing")
 	}
+
 	file := filepath.Join(t.TempDir(), "parts")
 	if err := os.WriteFile(file, make([]byte, 6<<20), 0600); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := denied.Upload(ctx, file, "x"); err == nil {
 		t.Fatal("create MPU denied")
 	}
+
 	if err := denied.Publish(ctx, "x", Manifest{}); err == nil {
 		t.Fatal("invalid manifest accepted")
 	}
+
 	for _, raw := range []string{"{}", "{invalid"} {
 		s := testS3(t, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Length", "30")
@@ -462,6 +562,7 @@ func TestStorageFailures(t *testing.T) {
 			t.Fatal("truncated manifest")
 		}
 	}
+
 	file = filepath.Join(t.TempDir(), "single")
 	_ = os.WriteFile(file, []byte("data"), 0600)
 	count := 0
@@ -470,6 +571,7 @@ func TestStorageFailures(t *testing.T) {
 			w.Header().Set("Content-Length", "4")
 			return
 		}
+
 		count++
 		w.WriteHeader(403)
 	})
@@ -492,12 +594,18 @@ func TestMalformedListingNeverDeletes(t *testing.T) {
 				w.WriteHeader(204)
 				return
 			}
+
 			w.Header().Set("Content-Type", "application/xml")
 			if r.URL.Query().Has("versioning") {
 				fmt.Fprint(w, `<VersioningConfiguration/>`)
 				return
 			}
-			fmt.Fprintf(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents>%s</Contents></ListBucketResult>`, contents)
+
+			fmt.Fprintf(
+				w,
+				`<ListBucketResult><IsTruncated>false</IsTruncated><Contents>%s</Contents></ListBucketResult>`,
+				contents,
+			)
 		})
 		c := fixtureConfig(t)
 		c.Retention.Enabled = true
@@ -506,6 +614,7 @@ func TestMalformedListingNeverDeletes(t *testing.T) {
 		if _, err := Rotate(context.Background(), s, c, "unused", time.Now()); err == nil {
 			t.Fatal("malformed listing accepted")
 		}
+
 		if deletes > 0 {
 			t.Fatal("unsafe delete")
 		}

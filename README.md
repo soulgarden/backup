@@ -12,6 +12,8 @@ S3 credentials are read only from `/credentials/access_key`, `secret_key` and
 optional `session_token`; SDK credential discovery is not used. Exceptions never
 print credential-bearing SDK/server diagnostics. JSON events identify the failed
 stage. `BACKUP_CONFIG`, `BACKUP_WORKSPACE`, `S3_CREDENTIALS_DIR` override file paths.
+The corresponding `--config`, `--workspace`, `--credentials` flags take precedence
+over environment variables. Run `backup --help` for commands and flags.
 
 `includeSchemas: []` covers the database's non-system scope; inaccessible objects
 fail the dump. PostgreSQL pattern semantics apply to schema/table filters.
@@ -22,10 +24,12 @@ conflicting exclude-data policies fail validation. No row-count scans are used.
 
 ## Local checks
 
-The runner is Go 1.27.2 with the AWS SDK for Go v2. The final image contains the
-compiled runner and PostgreSQL client tools; Python is not installed.
+The runner uses Go 1.27.2, AWS SDK for Go v2, Cobra and Viper. The final image
+contains the compiled runner and PostgreSQL client tools.
 
-Run `make lint test test-race vet build`. `make image` builds without publishing.
+Run `make lint helm-validate test test-race vet build`. `make helm-validate` runs
+strict Helm lint and render tests, validates generated JSON and checks activation
+gates. `make image` builds without publishing.
 `make integration` creates disposable PostgreSQL16/Moto fixtures and runs native
 Go integration tests; SQL is never restored. `scripts/logalert.sh` uses an isolated
 Elasticsearch and mock sender. `scripts/client-matrix.sh` checks actual PG17/18
@@ -71,7 +75,7 @@ the completed backup remains valid. S3 availability can change after verificatio
 
 Both charts initially suspend the new CronJob. Before activation:
 
-1. Run all checks against the exact image. Run `backup -mode contract` in
+1. Run all checks against the exact image. Run `backup contract` in
    that image against a dedicated `backup-fixture-*` DigitalOcean AMS3 bucket.
    The contract command rejects production bucket names and requires sanitized provider
    evidence `{bucket, limited_access:true, access:"Read/Write/Delete"}`. It tests
@@ -97,12 +101,12 @@ transferred as an artifact and published without rebuilding.
 
 The protected `backup-release` environment needs
 DOCKER_HUB_USERNAME/DOCKER_HUB_ACCESS_TOKEN and separate Spaces fixture
-credentials/evidence. The native `-mode contract` command runs from the tested
-image via `scripts/provider-contract.sh`; workflow files contain no inline Python.
+credentials/evidence. The `contract` command runs from the tested image via
+`scripts/provider-contract.sh`.
 Existing version tags and ambiguous registry responses block publication. No
 latest tag is overwritten. Production charts receive the published digest in a
 separate rollout change. Do not deploy a draft suspended chart over a running
-production schedule. `backup -mode verify-lifecycle -report /work/lifecycle.json`
+production schedule. `backup verify-lifecycle --report /work/lifecycle.json`
 reads back the required prefix-scoped lifecycle rule without changing it.
 
 The CI chart migrates encrypted SOPS values to s3.accessKey/secretKey/sessionToken.

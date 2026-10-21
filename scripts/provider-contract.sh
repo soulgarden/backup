@@ -17,4 +17,5 @@ chmod 777 artifacts
 docker run --rm --mount "type=bind,src=$work,dst=/credentials,readonly" \
   --mount "type=bind,src=$work/config.json,dst=/config/config.json,readonly" \
   --mount "type=bind,src=$PWD/artifacts,dst=/reports" "${IMAGE:?}" \
-  -mode contract -canary-bucket "${FIXTURE_CANARY_BUCKET:?}" -scope-evidence /credentials/scope.json -report /reports/provider.json
+  contract --canary-bucket "${FIXTURE_CANARY_BUCKET:?}" \
+  --scope-evidence /credentials/scope.json --report /reports/provider.json
