@@ -60,8 +60,13 @@ func TestPathPrecedence(t *testing.T) {
 			want: []string{"flag-config", "env-credentials", "env-workspace"},
 		},
 		{
-			name: "explicit production contract requires no fixture flags",
-			args: []string{"contract", "--allow-production-bucket"},
+			name: "contract uses configured paths",
+			args: []string{"contract"},
+			want: []string{"/config/config.json", "/credentials", "/work"},
+		},
+		{
+			name: "contract dry run",
+			args: []string{"contract", "--dry-run"},
 			want: []string{"/config/config.json", "/credentials", "/work"},
 		},
 	} {
@@ -107,8 +112,7 @@ func TestHelpAndVersion(t *testing.T) {
 	}{
 		{[]string{"--help"}, "Create and verify a PostgreSQL archive"},
 		{[]string{"--version"}, version},
-		{[]string{"contract", "--help"}, "--canary-bucket"},
-		{[]string{"contract", "--help"}, "--allow-production-bucket"},
+		{[]string{"contract", "--help"}, "--dry-run"},
 		{[]string{"verify-lifecycle", "--help"}, "--report"},
 	} {
 		var output bytes.Buffer
@@ -125,10 +129,8 @@ func TestInvalidArgumentsAreSanitized(t *testing.T) {
 	for _, args := range [][]string{
 		{"--unknown=secret-value"},
 		{"secret-value"},
-		{"contract"},
-		{"contract", "--canary-bucket", "secret-value"},
-		{"contract", "--allow-production-bucket", "--scope-evidence", "secret-value"},
-		{"contract", "--allow-production-bucket", "--canary-bucket", "secret-value"},
+		{"contract", "secret-value"},
+		{"contract", "--dry-run=secret-value"},
 		{"verify-lifecycle", "secret-value"},
 		{"--config"},
 	} {
@@ -166,7 +168,7 @@ func TestSetupAndContractFailures(t *testing.T) {
 		{[]string{"--workspace", filepath.Join(dir, "secret-value")}, "INVALID_SETUP"},
 		{nil, "STAGE_FAILED"},
 		{
-			[]string{"contract", "--canary-bucket", "invalid", "--scope-evidence", "secret-value"},
+			[]string{"contract", "--report", filepath.Join(dir, "missing", "report.json")},
 			"CONTRACT_FAILED",
 		},
 	} {

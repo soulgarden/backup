@@ -77,14 +77,8 @@ func newCommand(settings *viper.Viper) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE:  root.RunE,
 	}
-	contract.Flags().String("canary-bucket", "", "separate provisioned fixture canary bucket")
-	contract.Flags().String("scope-evidence", "", "sanitized limited-key scope evidence")
-	contract.Flags().Bool("allow-production-bucket", false, "allow isolated checks in the configured production bucket; key scope is not verified")
+	contract.Flags().Bool("dry-run", false, "read bucket settings and show planned checks without uploading or deleting objects")
 	contract.Flags().String("report", "/work/provider.json", "non-secret report path")
-	contract.MarkFlagsRequiredTogether("canary-bucket", "scope-evidence")
-	contract.MarkFlagsOneRequired("canary-bucket", "allow-production-bucket")
-	contract.MarkFlagsMutuallyExclusive("canary-bucket", "allow-production-bucket")
-	contract.MarkFlagsMutuallyExclusive("scope-evidence", "allow-production-bucket")
 
 	lifecycle := &cobra.Command{
 		Use:   "verify-lifecycle",
@@ -163,15 +157,11 @@ func execute(cmd *cobra.Command, settings *viper.Viper) error {
 		}
 
 	case "contract":
-		canary, _ := cmd.Flags().GetString("canary-bucket")
-		evidence, _ := cmd.Flags().GetString("scope-evidence")
 		report, _ := cmd.Flags().GetString("report")
-		production, _ := cmd.Flags().GetBool("allow-production-bucket")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		err = backup.ProviderContract(ctx, store, backup.ContractOptions{
-			CanaryBucket:          canary,
-			ScopeEvidencePath:     evidence,
-			AllowProductionBucket: production,
-			RunnerVersion:         version,
+			DryRun:        dryRun,
+			RunnerVersion: version,
 		}, report)
 
 	case "verify-lifecycle":

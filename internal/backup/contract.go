@@ -3,8 +3,6 @@ package backup
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -25,10 +22,8 @@ import (
 )
 
 type ContractOptions struct {
-	CanaryBucket          string
-	ScopeEvidencePath     string
-	AllowProductionBucket bool
-	RunnerVersion         string
+	DryRun        bool
+	RunnerVersion string
 }
 
 const ContractCleanupTimeout = 5 * time.Minute
@@ -42,46 +37,6 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 	}); err != nil {
 		return err
 	}
-	canary, evidencePath := options.CanaryBucket, options.ScopeEvidencePath
-	var evidence []byte
-	scopeVerified := !options.AllowProductionBucket
-	if scopeVerified {
-		validBucket := regexp.MustCompile(`^backup-fixture-[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
-		if !validBucket.MatchString(bucket) || !validBucket.MatchString(canary) || len(bucket) > 63 ||
-			len(canary) > 63 ||
-			bucket == canary {
-			return errors.New("INVALID_FIXTURE_SCOPE")
-		}
-
-		var err error
-		evidence, err = os.ReadFile(evidencePath)
-		if err != nil {
-			return err
-		}
-
-		var scope struct {
-			Bucket  string `json:"bucket"`
-			Limited bool   `json:"limited_access"`
-			Access  string `json:"access"`
-		}
-
-		if json.Unmarshal(evidence, &scope) != nil || scope.Bucket != bucket || !scope.Limited ||
-			scope.Access != "Read/Write/Delete" {
-			return errors.New("INVALID_SCOPE_EVIDENCE")
-		}
-
-		_, err = store.Client.ListObjectsV2(
-			ctx,
-			&s3.ListObjectsV2Input{Bucket: aws.String(canary), MaxKeys: aws.Int32(1)},
-		)
-		var api smithy.APIError
-		if !errors.As(err, &api) || (api.ErrorCode() != "AccessDenied" && api.ErrorCode() != "403") {
-			return errors.New("CANARY_SCOPE_FAILED")
-		}
-	} else if canary != "" || evidencePath != "" {
-		return errors.New("AMBIGUOUS_CONTRACT_SCOPE")
-	}
-
 	status, err := store.Versioning(ctx)
 	if err != nil || status != "" {
 		return errors.New("VERSIONING_UNSUPPORTED")
@@ -96,8 +51,11 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 	storeCopy := *store
 	store = &storeCopy
 	store.Config.Prefix = "_backup-contract/" + id + "/"
+	// Keep probes small and exercise multiple parts regardless of backup tuning.
+	store.Config.MultipartThresholdMiB = 64
+	store.Config.MultipartChunkSizeMiB = 16
 	prefix := store.Config.Prefix
-	// A production check must never enter the backup or legacy object namespaces.
+	// Temporary checks must never enter the configured backup namespace.
 	if strings.HasPrefix(prefix, backupPrefix) || strings.HasPrefix(backupPrefix, "_backup-contract/") {
 		return errors.New("CONTRACT_PREFIX_OVERLAP")
 	}
@@ -105,6 +63,18 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 	for n := 0; n < 1001; n++ {
 		ownedKeys = append(ownedKeys, fmt.Sprintf("%spages/%d", prefix, n))
 	}
+	if options.DryRun {
+		return writeReport(reportPath, map[string]any{
+			"status":               "dry_run",
+			"bucket":               bucket,
+			"endpoint":             store.Config.Endpoint,
+			"test_prefix":          prefix,
+			"runner_version":       options.RunnerVersion,
+			"planned_object_count": len(ownedKeys),
+			"planned_checks":       []string{"single_put", "multipart", "full_sha256", "pagination", "mpu_abort", "cleanup"},
+		})
+	}
+
 	journal := map[string]any{
 		"status":           "running",
 		"bucket":           bucket,
@@ -303,11 +273,6 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 	}
 
 	success = true
-	evidenceHash := ""
-	if scopeVerified {
-		hash := sha256.Sum256(evidence)
-		evidenceHash = hex.EncodeToString(hash[:])
-	}
 	modules := map[string]string{"github.com/aws/aws-sdk-go-v2": aws.SDKVersion}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range info.Deps {
@@ -324,8 +289,6 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 			"runner_version":               options.RunnerVersion,
 			"bucket":                       bucket,
 			"test_prefix":                  prefix,
-			"production_bucket":            options.AllowProductionBucket,
-			"credential_scope_verified":    scopeVerified,
 			"endpoint":                     store.Config.Endpoint,
 			"go_version":                   runtime.Version(),
 			"sdk_modules":                  modules,
@@ -338,9 +301,7 @@ func ProviderContract(ctx context.Context, store *S3Store, options ContractOptio
 			"get_versioning":               true,
 			"mpu_abort":                    true,
 			"aborted_part_bytes":           5 << 20,
-			"canary_access_denied":         scopeVerified,
-			"fixture_cleanup":              true,
-			"scope_evidence_sha256":        evidenceHash,
+			"cleanup_complete":             true,
 		},
 	)
 }

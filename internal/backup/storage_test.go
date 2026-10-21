@@ -298,34 +298,23 @@ func TestS3UploadAbort(t *testing.T) {
 
 func TestProviderGuards(t *testing.T) {
 	report := filepath.Join(t.TempDir(), "report.json")
-	s := testS3(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(403) })
-	if ProviderContract(context.Background(), s, ContractOptions{CanaryBucket: "backup-fixture-canary", ScopeEvidencePath: "missing"}, report) == nil {
-		t.Fatal("production fixture accepted")
-	}
-
-	s.Config.Bucket = "backup-fixture-test"
-	if ProviderContract(context.Background(), s, ContractOptions{CanaryBucket: s.Config.Bucket, ScopeEvidencePath: "missing"}, report) == nil {
-		t.Fatal("same bucket")
-	}
-
-	path := filepath.Join(t.TempDir(), "scope")
-	_ = os.WriteFile(
-		path,
-		[]byte(`{"bucket":"backup-fixture-test","access":"Read/Write/Delete","limited_access":false}`),
-		0600,
-	)
-	if ProviderContract(context.Background(), s, ContractOptions{CanaryBucket: "backup-fixture-canary", ScopeEvidencePath: path}, report) == nil {
-		t.Fatal("wide key")
-	}
-
-	for _, options := range []ContractOptions{
-		{AllowProductionBucket: true, CanaryBucket: "backup-fixture-canary"},
-		{AllowProductionBucket: true, ScopeEvidencePath: path},
-		{AllowProductionBucket: true},
-	} {
-		if ProviderContract(context.Background(), s, options, report) == nil {
-			t.Fatal("ambiguous production scope or denied versioning accepted")
-		}
+	for _, status := range []string{"denied", "Enabled", "Suspended"} {
+		t.Run("versioning "+status, func(t *testing.T) {
+			writes := 0
+			store := testS3(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					writes++
+				}
+				if status == "denied" {
+					w.WriteHeader(403)
+					return
+				}
+				fmt.Fprintf(w, "<VersioningConfiguration><Status>%s</Status></VersioningConfiguration>", status)
+			})
+			if ProviderContract(context.Background(), store, ContractOptions{}, report) == nil || writes != 0 {
+				t.Fatal("unconfirmed or enabled versioning accepted")
+			}
+		})
 	}
 	for _, prefix := range []string{"", "_backup-contract/", "_backup-contract/nested/"} {
 		t.Run("overlapping prefix "+prefix, func(t *testing.T) {
@@ -337,7 +326,7 @@ func TestProviderGuards(t *testing.T) {
 				fmt.Fprint(w, "<VersioningConfiguration/>")
 			})
 			store.Config.Prefix = prefix
-			if ProviderContract(context.Background(), store, ContractOptions{AllowProductionBucket: true}, report) == nil || writes != 0 {
+			if ProviderContract(context.Background(), store, ContractOptions{}, report) == nil || writes != 0 {
 				t.Fatal("overlapping namespace accepted")
 			}
 		})
@@ -377,8 +366,36 @@ func TestProviderGuards(t *testing.T) {
 	}
 }
 
+func TestProviderContractDryRun(t *testing.T) {
+	requests := 0
+	store := testS3(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != "GET" || !r.URL.Query().Has("versioning") || r.URL.Path != "/example-backups" {
+			t.Error("dry run made a request other than reading configured bucket versioning")
+		}
+		fmt.Fprint(w, "<VersioningConfiguration/>")
+	})
+	report := filepath.Join(t.TempDir(), "report.json")
+	if err := os.WriteFile(report, []byte(`{"status":"completed"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProviderContract(context.Background(), store, ContractOptions{DryRun: true}, report); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(report)
+	var result struct {
+		Status  string `json:"status"`
+		Bucket  string `json:"bucket"`
+		Objects int    `json:"planned_object_count"`
+	}
+	if err != nil || json.Unmarshal(raw, &result) != nil || result.Status != "dry_run" ||
+		result.Bucket != store.Config.Bucket || result.Objects != 1003 || requests != 1 {
+		t.Fatal("dry run must describe planned checks without claiming success", string(raw), err)
+	}
+}
+
 func TestProviderContractHTTP(t *testing.T) {
-	for _, mode := range []string{"fixture", "production", "foreign_object", "put_failure", "cancelled_put", "abort_failure"} {
+	for _, mode := range []string{"success", "high_threshold", "foreign_object", "put_failure", "cancelled_put", "abort_failure"} {
 		t.Run(mode, func(t *testing.T) { testProviderContractHTTP(t, mode) })
 	}
 }
@@ -386,23 +403,27 @@ func TestProviderContractHTTP(t *testing.T) {
 func testProviderContractHTTP(t *testing.T, mode string) {
 	dir := t.TempDir()
 	report := filepath.Join(dir, "report.json")
-	if err := os.WriteFile(report, []byte(`{"status":"completed","fixture_cleanup":true}`), 0600); err != nil {
+	if err := os.WriteFile(report, []byte(`{"status":"completed","cleanup_complete":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var mu sync.Mutex
 	objects := map[string][]byte{
-		"swup/v2/existing/backup.dump": []byte("production archive"),
-		"swup/old.sql.gz":              []byte("legacy archive"),
+		"example/v2/existing/backup.dump": []byte("existing archive"),
+		"example/old.sql.gz":              []byte("legacy archive"),
 	}
 	parts := map[string]map[int][]byte{}
 	uploads := map[string]string{}
 	next := 0
+	multipartParts := 0
 	foreignKey := ""
 	s := testS3(t, func(w http.ResponseWriter, r *http.Request) {
 		fields := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
 		bucket := fields[0]
+		if bucket != "example-backups" {
+			t.Error("request to a bucket other than the configured bucket")
+		}
 		key := ""
 		if len(fields) == 2 {
 			key = fields[1]
@@ -422,13 +443,6 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 				t.Error("recovery journal missing before write")
 			}
 		}
-		if bucket == "backup-fixture-canary" {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(403)
-			_, _ = io.WriteString(w, `<Error><Code>AccessDenied</Code></Error>`)
-			return
-		}
-
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/xml")
@@ -477,6 +491,9 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 				id,
 			)
 		case r.Method == "PUT" && q.Has("partNumber"):
+			if strings.HasSuffix(key, "/multipart") {
+				multipartParts++
+			}
 			raw, _ := io.ReadAll(r.Body)
 			number, _ := strconv.Atoi(q.Get("partNumber"))
 			parts[q.Get("uploadId")][number] = raw
@@ -552,39 +569,32 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 			}
 		}
 	})
-	s.Config.Bucket = "backup-fixture-contract"
-	options := ContractOptions{CanaryBucket: "backup-fixture-canary"}
-	if mode != "fixture" {
-		s.Config.Bucket = "swup-backups"
-		options = ContractOptions{AllowProductionBucket: true}
+	if mode == "high_threshold" {
+		s.Config.MultipartThresholdMiB = 128
+		s.Config.MultipartChunkSizeMiB = 128
 	}
-	evidence := filepath.Join(dir, "scope.json")
-	if err := os.WriteFile(evidence, []byte(`{"bucket":"backup-fixture-contract","limited_access":true,"access":"Read/Write/Delete"}`), 0600); err != nil {
-		t.Fatal(err)
+	original := s.Config
+	err := ProviderContract(ctx, s, ContractOptions{}, report)
+	if s.Config != original {
+		t.Fatal("probe settings changed the backup configuration")
 	}
-
-	if mode == "fixture" {
-		options.ScopeEvidencePath = evidence
-	}
-	err := ProviderContract(ctx, s, options, report)
 	failure := mode == "foreign_object" || mode == "put_failure" || mode == "cancelled_put" || mode == "abort_failure"
 	if (err != nil) != failure {
 		t.Fatal(err)
 	}
 
 	if !failure {
+		if multipartParts < 2 {
+			t.Fatal("multipart check did not upload multiple parts")
+		}
 		raw, err := os.ReadFile(report)
-		if err != nil || !bytes.Contains(raw, []byte(`"fixture_cleanup": true`)) {
+		if err != nil || !bytes.Contains(raw, []byte(`"cleanup_complete": true`)) {
 			t.Fatal(string(raw), err)
 		}
 		var result map[string]any
-		if json.Unmarshal(raw, &result) != nil ||
-			result["credential_scope_verified"] != (mode == "fixture") ||
-			result["canary_access_denied"] != (mode == "fixture") {
-			t.Fatal("incorrect scope claim", string(raw))
-		}
-		if mode != "fixture" && result["scope_evidence_sha256"] != "" {
-			t.Fatal("unexpected scope evidence", string(raw))
+		if json.Unmarshal(raw, &result) != nil || result["status"] != "completed" ||
+			result["bucket"] != "example-backups" {
+			t.Fatal("incorrect completion report", string(raw))
 		}
 	} else {
 		raw, readErr := os.ReadFile(report)
@@ -618,9 +628,9 @@ func testProviderContractHTTP(t *testing.T, mode string) {
 			t.Fatal("foreign object modified")
 		}
 	}
-	if string(objects["swup/v2/existing/backup.dump"]) != "production archive" ||
-		string(objects["swup/old.sql.gz"]) != "legacy archive" {
-		t.Fatal("production objects modified")
+	if string(objects["example/v2/existing/backup.dump"]) != "existing archive" ||
+		string(objects["example/old.sql.gz"]) != "legacy archive" {
+		t.Fatal("existing objects modified")
 	}
 	expectedUploads := 0
 	if mode == "abort_failure" {
