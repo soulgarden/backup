@@ -20,40 +20,65 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"golang.org/x/sync/errgroup"
 )
 
-func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath, reportPath string) error {
-	bucket := store.Config.Bucket
-	validBucket := regexp.MustCompile(`^backup-fixture-[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
-	if !validBucket.MatchString(bucket) || !validBucket.MatchString(canary) || len(bucket) > 63 ||
-		len(canary) > 63 ||
-		bucket == canary {
-		return errors.New("INVALID_FIXTURE_SCOPE")
-	}
+type ContractOptions struct {
+	CanaryBucket          string
+	ScopeEvidencePath     string
+	AllowProductionBucket bool
+	RunnerVersion         string
+}
 
-	evidence, err := os.ReadFile(evidencePath)
-	if err != nil {
+const ContractCleanupTimeout = 5 * time.Minute
+
+func ProviderContract(ctx context.Context, store *S3Store, options ContractOptions, reportPath string) error {
+	bucket := store.Config.Bucket
+	if err := writeReport(reportPath, map[string]any{
+		"status":         "preflight",
+		"bucket":         bucket,
+		"runner_version": options.RunnerVersion,
+	}); err != nil {
 		return err
 	}
+	canary, evidencePath := options.CanaryBucket, options.ScopeEvidencePath
+	var evidence []byte
+	scopeVerified := !options.AllowProductionBucket
+	if scopeVerified {
+		validBucket := regexp.MustCompile(`^backup-fixture-[a-z0-9][a-z0-9.-]*[a-z0-9]$`)
+		if !validBucket.MatchString(bucket) || !validBucket.MatchString(canary) || len(bucket) > 63 ||
+			len(canary) > 63 ||
+			bucket == canary {
+			return errors.New("INVALID_FIXTURE_SCOPE")
+		}
 
-	var scope struct {
-		Bucket  string `json:"bucket"`
-		Limited bool   `json:"limited_access"`
-		Access  string `json:"access"`
-	}
+		var err error
+		evidence, err = os.ReadFile(evidencePath)
+		if err != nil {
+			return err
+		}
 
-	if json.Unmarshal(evidence, &scope) != nil || scope.Bucket != bucket || !scope.Limited ||
-		scope.Access != "Read/Write/Delete" {
-		return errors.New("INVALID_SCOPE_EVIDENCE")
-	}
+		var scope struct {
+			Bucket  string `json:"bucket"`
+			Limited bool   `json:"limited_access"`
+			Access  string `json:"access"`
+		}
 
-	_, err = store.Client.ListObjectsV2(
-		ctx,
-		&s3.ListObjectsV2Input{Bucket: aws.String(canary), MaxKeys: aws.Int32(1)},
-	)
-	var api smithy.APIError
-	if !errors.As(err, &api) || (api.ErrorCode() != "AccessDenied" && api.ErrorCode() != "403") {
-		return errors.New("CANARY_SCOPE_FAILED")
+		if json.Unmarshal(evidence, &scope) != nil || scope.Bucket != bucket || !scope.Limited ||
+			scope.Access != "Read/Write/Delete" {
+			return errors.New("INVALID_SCOPE_EVIDENCE")
+		}
+
+		_, err = store.Client.ListObjectsV2(
+			ctx,
+			&s3.ListObjectsV2Input{Bucket: aws.String(canary), MaxKeys: aws.Int32(1)},
+		)
+		var api smithy.APIError
+		if !errors.As(err, &api) || (api.ErrorCode() != "AccessDenied" && api.ErrorCode() != "403") {
+			return errors.New("CANARY_SCOPE_FAILED")
+		}
+	} else if canary != "" || evidencePath != "" {
+		return errors.New("AMBIGUOUS_CONTRACT_SCOPE")
 	}
 
 	status, err := store.Versioning(ctx)
@@ -66,31 +91,70 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 		return err
 	}
 
+	backupPrefix := store.Config.Prefix
 	storeCopy := *store
 	store = &storeCopy
-	store.Config.Prefix = "contract/" + id + "/"
+	store.Config.Prefix = "_backup-contract/" + id + "/"
 	prefix := store.Config.Prefix
+	// A production check must never enter the backup or legacy object namespaces.
+	if strings.HasPrefix(prefix, backupPrefix) || strings.HasPrefix(backupPrefix, "_backup-contract/") {
+		return errors.New("CONTRACT_PREFIX_OVERLAP")
+	}
+	ownedKeys := []string{prefix + "single", prefix + "multipart"}
+	for n := 0; n < 1001; n++ {
+		ownedKeys = append(ownedKeys, fmt.Sprintf("%spages/%d", prefix, n))
+	}
+	journal := map[string]any{
+		"status":           "running",
+		"bucket":           bucket,
+		"test_prefix":      prefix,
+		"runner_version":   options.RunnerVersion,
+		"owned_keys":       ownedKeys,
+		"cleanup_complete": false,
+		"multipart_keys":   []string{prefix + "multipart", prefix + "abort"},
+	}
+	// Save the complete recovery scope before the first mutation, including keys
+	// whose upload could succeed remotely while its response is lost.
+	if err = writeReport(reportPath, journal); err != nil {
+		return err
+	}
+	cleanupAttempted := false
+	var cleanupErr error
 	cleanup := func() error {
-		clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+		if cleanupAttempted {
+			return cleanupErr
+		}
+		cleanupAttempted = true
+		clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), ContractCleanupTimeout)
 		defer cancel()
-		objects, e := store.List(clean, prefix)
-		if e != nil {
-			return e
+		group, workers := errgroup.WithContext(clean)
+		group.SetLimit(store.Config.MaxConcurrency)
+		for _, key := range ownedKeys {
+			group.Go(func() error { return store.Delete(workers, key) })
 		}
-
-		for _, o := range objects {
-			if e = store.Delete(clean, o.Key); e != nil {
-				return e
-			}
+		cleanupErr = group.Wait()
+		if cleanupErr != nil {
+			return cleanupErr
 		}
-
-		return nil
+		remaining, err := store.Client.ListMultipartUploads(clean, &s3.ListMultipartUploadsInput{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String(prefix),
+		})
+		if err != nil {
+			cleanupErr = err
+		} else if aws.ToBool(remaining.IsTruncated) || len(remaining.Uploads) != 0 {
+			cleanupErr = errors.New("CONTRACT_MULTIPART_REMAINS")
+		}
+		return cleanupErr
 	}
 
 	success := false
 	defer func() {
 		if !success {
 			_ = cleanup()
+			journal["status"] = "failed"
+			journal["cleanup_complete"] = cleanupErr == nil
+			_ = writeReport(reportPath, journal)
 		}
 	}()
 	dir, err := os.MkdirTemp("", "backup-contract-")
@@ -119,7 +183,8 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 			return closeErr
 		}
 
-		if e = store.Upload(ctx, path, prefix+item.name); e != nil {
+		key := prefix + item.name
+		if e = store.Upload(ctx, path, key); e != nil {
 			return e
 		}
 
@@ -133,18 +198,24 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 		}
 	}
 
+	group, workers := errgroup.WithContext(ctx)
+	group.SetLimit(store.Config.MaxConcurrency)
 	for n := 0; n < 1001; n++ {
-		_, err = store.Client.PutObject(
-			ctx,
-			&s3.PutObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(fmt.Sprintf("%spages/%d", prefix, n)),
-				Body:   strings.NewReader("x"),
-			},
-		)
-		if err != nil {
+		key := fmt.Sprintf("%spages/%d", prefix, n)
+		group.Go(func() error {
+			_, err := store.Client.PutObject(
+				workers,
+				&s3.PutObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    aws.String(key),
+					Body:   strings.NewReader("x"),
+				},
+			)
 			return err
-		}
+		})
+	}
+	if err = group.Wait(); err != nil {
+		return err
 	}
 
 	objects, err := store.List(ctx, prefix)
@@ -176,6 +247,10 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 				partErr = e
 			}
 		}()
+		journal["abort_upload_id"] = aws.ToString(mpu.UploadId)
+		if e := writeReport(reportPath, journal); e != nil {
+			return e
+		}
 		f, e := os.Open(filepath.Join(dir, "multipart"))
 		if e != nil {
 			return e
@@ -217,7 +292,11 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 	}
 
 	success = true
-	hash := sha256.Sum256(evidence)
+	evidenceHash := ""
+	if scopeVerified {
+		hash := sha256.Sum256(evidence)
+		evidenceHash = hex.EncodeToString(hash[:])
+	}
 	modules := map[string]string{"github.com/aws/aws-sdk-go-v2": aws.SDKVersion}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range info.Deps {
@@ -230,7 +309,12 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 	return writeReport(
 		reportPath,
 		map[string]any{
+			"status":                       "completed",
+			"runner_version":               options.RunnerVersion,
 			"bucket":                       bucket,
+			"test_prefix":                  prefix,
+			"production_bucket":            options.AllowProductionBucket,
+			"credential_scope_verified":    scopeVerified,
 			"endpoint":                     store.Config.Endpoint,
 			"go_version":                   runtime.Version(),
 			"sdk_modules":                  modules,
@@ -243,9 +327,9 @@ func ProviderContract(ctx context.Context, store *S3Store, canary, evidencePath,
 			"get_versioning":               true,
 			"mpu_abort":                    true,
 			"aborted_part_bytes":           5 << 20,
-			"canary_access_denied":         true,
+			"canary_access_denied":         scopeVerified,
 			"fixture_cleanup":              true,
-			"scope_evidence_sha256":        hex.EncodeToString(hash[:]),
+			"scope_evidence_sha256":        evidenceHash,
 		},
 	)
 }
@@ -303,5 +387,21 @@ func writeReport(path string, value any) error {
 		return err
 	}
 
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	file, err := os.CreateTemp(filepath.Dir(path), ".backup-report-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(append(data, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Chmod(0644); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }

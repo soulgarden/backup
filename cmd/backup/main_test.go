@@ -9,10 +9,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/soulgarden/backup/internal/backup"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+func TestContractShutdownBudget(t *testing.T) {
+	if shutdownGrace("contract", 5) <= backup.ContractCleanupTimeout {
+		t.Fatal("contract watchdog interrupts cleanup")
+	}
+	for _, command := range []string{"backup", "verify-lifecycle"} {
+		if shutdownGrace(command, 45) != 45*time.Second {
+			t.Fatal("normal shutdown budget changed")
+		}
+	}
+}
 
 func TestPathPrecedence(t *testing.T) {
 	for _, tc := range []struct {
@@ -45,6 +58,11 @@ func TestPathPrecedence(t *testing.T) {
 			env:  true,
 			args: []string{"verify-lifecycle", "--config", "flag-config"},
 			want: []string{"flag-config", "env-credentials", "env-workspace"},
+		},
+		{
+			name: "explicit production contract requires no fixture flags",
+			args: []string{"contract", "--allow-production-bucket"},
+			want: []string{"/config/config.json", "/credentials", "/work"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,6 +108,7 @@ func TestHelpAndVersion(t *testing.T) {
 		{[]string{"--help"}, "Create and verify a PostgreSQL archive"},
 		{[]string{"--version"}, version},
 		{[]string{"contract", "--help"}, "--canary-bucket"},
+		{[]string{"contract", "--help"}, "--allow-production-bucket"},
 		{[]string{"verify-lifecycle", "--help"}, "--report"},
 	} {
 		var output bytes.Buffer
@@ -108,6 +127,8 @@ func TestInvalidArgumentsAreSanitized(t *testing.T) {
 		{"secret-value"},
 		{"contract"},
 		{"contract", "--canary-bucket", "secret-value"},
+		{"contract", "--allow-production-bucket", "--scope-evidence", "secret-value"},
+		{"contract", "--allow-production-bucket", "--canary-bucket", "secret-value"},
 		{"verify-lifecycle", "secret-value"},
 		{"--config"},
 	} {

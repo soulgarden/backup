@@ -94,13 +94,19 @@ jobs:
           gunzip -c tested-image.tar.gz | docker load
           docker tag backup-tested:${{ github.sha }} "soulgarden/backup:$(cat VERSION)"
           scripts/check-unpublished.sh
-      - name: Check DigitalOcean contract
+      - name: Check DigitalOcean contract in SWUP bucket
         env:
-          FIXTURE_BUCKET: ${{ vars.SPACES_FIXTURE_BUCKET }}
-          FIXTURE_CANARY_BUCKET: ${{ vars.SPACES_FIXTURE_CANARY_BUCKET }}
-          SCOPE_EVIDENCE: ${{ vars.SPACES_FIXTURE_SCOPE_EVIDENCE }}
-          FIXTURE_ACCESS_KEY: ${{ secrets.SPACES_FIXTURE_ACCESS_KEY }}
-          FIXTURE_SECRET_KEY: ${{ secrets.SPACES_FIXTURE_SECRET_KEY }}
+          CONTRACT_BUCKET: swup-backups
+          CONTRACT_BACKUP_PREFIX: swup/v2/
+          CONTRACT_ACCESS_KEY: ${{ secrets.SPACES_SWUP_ACCESS_KEY }}
+          CONTRACT_SECRET_KEY: ${{ secrets.SPACES_SWUP_SECRET_KEY }}
+        run: IMAGE="soulgarden/backup:$(cat VERSION)" scripts/provider-contract.sh
+      - name: Check DigitalOcean contract in Kino bucket
+        env:
+          CONTRACT_BUCKET: kino-backups
+          CONTRACT_BACKUP_PREFIX: kino/v2/
+          CONTRACT_ACCESS_KEY: ${{ secrets.SPACES_KINO_ACCESS_KEY }}
+          CONTRACT_SECRET_KEY: ${{ secrets.SPACES_KINO_SECRET_KEY }}
         run: IMAGE="soulgarden/backup:$(cat VERSION)" scripts/provider-contract.sh
       - uses: docker/login-action@v4.6.0
         with:

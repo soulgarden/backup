@@ -73,15 +73,18 @@ func newCommand(settings *viper.Viper) *cobra.Command {
 
 	contract := &cobra.Command{
 		Use:   "contract",
-		Short: "Verify a dedicated DigitalOcean fixture bucket",
+		Short: "Verify S3 with isolated temporary objects",
 		Args:  cobra.NoArgs,
 		RunE:  root.RunE,
 	}
 	contract.Flags().String("canary-bucket", "", "separate provisioned fixture canary bucket")
 	contract.Flags().String("scope-evidence", "", "sanitized limited-key scope evidence")
+	contract.Flags().Bool("allow-production-bucket", false, "allow isolated checks in the configured production bucket; key scope is not verified")
 	contract.Flags().String("report", "/work/provider.json", "non-secret report path")
-	_ = contract.MarkFlagRequired("canary-bucket")
-	_ = contract.MarkFlagRequired("scope-evidence")
+	contract.MarkFlagsRequiredTogether("canary-bucket", "scope-evidence")
+	contract.MarkFlagsOneRequired("canary-bucket", "allow-production-bucket")
+	contract.MarkFlagsMutuallyExclusive("canary-bucket", "allow-production-bucket")
+	contract.MarkFlagsMutuallyExclusive("scope-evidence", "allow-production-bucket")
 
 	lifecycle := &cobra.Command{
 		Use:   "verify-lifecycle",
@@ -117,7 +120,7 @@ func execute(cmd *cobra.Command, settings *viper.Viper) error {
 	}
 
 	ctx := cmd.Context()
-	grace := time.Duration(c.Process.ShutdownGraceSeconds) * time.Second
+	grace := shutdownGrace(cmd.Name(), c.Process.ShutdownGraceSeconds)
 	done := make(chan struct{})
 	defer close(done)
 
@@ -163,7 +166,13 @@ func execute(cmd *cobra.Command, settings *viper.Viper) error {
 		canary, _ := cmd.Flags().GetString("canary-bucket")
 		evidence, _ := cmd.Flags().GetString("scope-evidence")
 		report, _ := cmd.Flags().GetString("report")
-		err = backup.ProviderContract(ctx, store, canary, evidence, report)
+		production, _ := cmd.Flags().GetBool("allow-production-bucket")
+		err = backup.ProviderContract(ctx, store, backup.ContractOptions{
+			CanaryBucket:          canary,
+			ScopeEvidencePath:     evidence,
+			AllowProductionBucket: production,
+			RunnerVersion:         version,
+		}, report)
 
 	case "verify-lifecycle":
 		report, _ := cmd.Flags().GetString("report")
@@ -174,4 +183,11 @@ func execute(cmd *cobra.Command, settings *viper.Viper) error {
 		return fail("CONTRACT_FAILED")
 	}
 	return nil
+}
+
+func shutdownGrace(command string, configuredSeconds int) time.Duration {
+	if command == "contract" {
+		return backup.ContractCleanupTimeout + 15*time.Second
+	}
+	return time.Duration(configuredSeconds) * time.Second
 }
