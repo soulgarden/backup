@@ -119,11 +119,12 @@ integration tests. An existing version skips publication; unknown registry
 responses fail closed. The tested image is
 transferred as an artifact and published without rebuilding.
 
-The `backup-release` environment needs DOCKER_HUB_USERNAME/
-DOCKER_HUB_ACCESS_TOKEN, SPACES_SWUP_ACCESS_KEY/SPACES_SWUP_SECRET_KEY and
-SPACES_KINO_ACCESS_KEY/SPACES_KINO_SECRET_KEY. Restrict environment deployment
-branches to main. The contract runs from the tested image against
-`swup-backups` and `kino-backups` via `scripts/provider-contract.sh`.
+The `backup-release` environment needs only the dedicated
+DOCKER_HUB_USERNAME/DOCKER_HUB_ACCESS_TOKEN for publication. Restrict environment
+deployment branches to main. CI runs disposable PostgreSQL/S3 fixtures.
+Before deployment, an operator runs `scripts/provider-contract.sh` locally
+from the published image against `swup-backups` and `kino-backups`. Production
+Spaces credentials stay outside CI.
 Existing version tags and ambiguous registry responses block publication. No
 latest tag is overwritten. Production charts receive the published digest in a
 separate rollout change. Do not deploy a draft suspended chart over a running
