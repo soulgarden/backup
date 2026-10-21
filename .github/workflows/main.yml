@@ -33,6 +33,8 @@ jobs:
   build:
     needs: checks
     runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,11 +58,15 @@ jobs:
         run: IMAGE=backup-tested:${{ github.sha }} scripts/integration.sh
       - run: scripts/logalert.sh
       - run: scripts/client-matrix.sh
-      - name: Save tested image
+      - name: Check whether this version needs publication
+        id: version
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: scripts/check-unpublished.sh --if-needed >> "$GITHUB_OUTPUT"
+      - name: Save tested image
+        if: steps.version.outputs.publish == 'true'
         run: docker save backup-tested:${{ github.sha }} | gzip > tested-image.tar.gz
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: steps.version.outputs.publish == 'true'
         with:
           name: tested-image-${{ github.sha }}
           path: tested-image.tar.gz
@@ -73,7 +79,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.outputs.publish == 'true'
     environment: backup-release
     runs-on: ubuntu-latest
     steps:

@@ -121,7 +121,7 @@ func ReadInventory(ctx context.Context, p Command, env []string) (Inventory, err
 	var inv Inventory
 	raw, err := p.Run(
 		ctx,
-		[]string{"psql", "-X", "--no-password", "-At", "-v", "ON_ERROR_STOP=1", "-c", inventorySQL},
+		[]string{"psql", "-X", "--no-password", "-qAt", "-v", "ON_ERROR_STOP=1", "-c", inventorySQL},
 		env,
 		nil,
 	)

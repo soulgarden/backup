@@ -8,6 +8,9 @@ as a bounded stream to verify byte count and SHA-256. Publishes and reads back
 Configuration is versioned JSON (`config.example.json`, strict schema in
 `internal/backup/config.schema.json`). Helm renders arrays without shell interpolation.
 PGHOST/PGPORT/PGUSER/PGDATABASE/PGPASSWORD provide the source connection.
+Use a direct PostgreSQL service. The catalog query checks effective read-only
+settings and its five-second timeout in the same connection before reading
+metadata; discarded startup options stop the run before pg_dump.
 S3 credentials are read only from `/credentials/access_key`, `secret_key` and
 optional `session_token`; SDK credential discovery is not used. Exceptions never
 print credential-bearing SDK/server diagnostics. JSON events identify the failed
@@ -73,7 +76,12 @@ its own dryRun must also be false and at least seven verified sets must exist.
 Errors in retention or size anomalies emit fixed ERROR events that match logalert;
 the completed backup remains valid. S3 availability can change after verification.
 
-Both charts initially suspend the new CronJob. Before activation:
+The standalone chart initially suspends the new CronJob. The CI deployment chart
+defaults to `runner.mode=legacy`, preserving the existing active CronJob, pinned
+0.0.5 image, BUCKET and `.s3cfg` mount. Switch that same CronJob to
+`runner.mode=verified` only in the change supplying all activation gates below.
+This retains its schedule, history and Forbid protection during migration.
+Before activation:
 
 1. Run all checks against the exact image. Run `backup contract` in
    that image against a dedicated `backup-fixture-*` DigitalOcean AMS3 bucket.
@@ -86,7 +94,8 @@ Both charts initially suspend the new CronJob. Before activation:
    `AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}` while preserving all
    existing lifecycle rules. Runner credentials must not administer the bucket.
 3. Set the **published tested image digest**, `providerContractVerified=true`,
-   `multipartLifecycleVerified=true`, then `suspend=false` in the deployment chart.
+   `multipartLifecycleVerified=true`, then activate with `suspend=false`.
+   For the CI deployment chart, select `runner.mode=verified` in that same change.
    Use the original cadence; initial limits are estimates, measure RAM, disk and
    duration in one controlled run. Verify source role RLS/extension permissions.
 4. Keep retention dryRun=true, review candidates. Before setting dryRun=false,
@@ -96,7 +105,9 @@ Both charts initially suspend the new CronJob. Before activation:
 
 Release version comes from VERSION. One `.github/workflows/main.yml` runs checks
 for PRs and pushes to the single primary branch, `main`. Publication runs only
-on pushes to `main`, after checks and integration tests. The tested image is
+on pushes to `main` for a version absent from the registry, after checks and
+integration tests. An existing version skips publication; unknown registry
+responses fail closed. The tested image is
 transferred as an artifact and published without rebuilding.
 
 The protected `backup-release` environment needs
@@ -117,6 +128,7 @@ mount paths; do not merely run an old image with new runner mounts. Remove the
 legacy Secret only in a later explicit change. With external credentials, prepare
 that rollback Secret separately before switching (rendering refuses an ambiguous
 migration). No secret plaintext belongs in version control or rendered artifacts.
+The CI chart can restore the legacy image and mounts with `runner.mode=legacy`.
 
 SWUP production is DigitalOcean AMS3 (`swup-backups`), not Scaleway. Live release,
 lifecycle and provider key scope still require preflight confirmation. Alert rules

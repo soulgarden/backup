@@ -75,6 +75,53 @@ func TestFixture(t *testing.T) {
 	processes := Processes{5 * time.Second}
 	runID := "20261020T233000Z-" + strings.Repeat("a", 32)
 	runner := Runner{c, processes, store, "0.2.0", os.Stdout, time.Now}
+
+	for _, tc := range []struct {
+		name    string
+		options string
+	}{
+		{"startup options discarded", ""},
+		{"read-only discarded", "-c statement_timeout=5000"},
+		{"timeout discarded", "-c default_transaction_read_only=on"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dumpStarted := false
+			stripped := runner
+			stripped.Processes = fakeCommand{
+				func(ctx context.Context, args, env []string, out io.Writer) (string, error) {
+					if args[0] == "pg_dump" {
+						dumpStarted = true
+					}
+
+					var filtered []string
+					for _, value := range env {
+						if !strings.HasPrefix(value, "PGOPTIONS=") {
+							filtered = append(filtered, value)
+						}
+					}
+
+					filtered = append(filtered, "PGOPTIONS="+tc.options)
+					return processes.Run(ctx, args, filtered, out)
+				},
+			}
+			id, err := NewRunID(time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status := stripped.Run(ctx, work, id); status != 1 || dumpStarted {
+				t.Fatalf(
+					"unsafe session was not rejected before dump: status=%d dump=%t",
+					status,
+					dumpStarted,
+				)
+			}
+			objects, err := store.List(ctx, c.S3.Prefix+id+"/")
+			if err != nil || len(objects) != 0 {
+				t.Fatal("unsafe session published objects", err)
+			}
+		})
+	}
+
 	if code := runner.Run(ctx, work, runID); code != 0 {
 		t.Fatal("runner", code)
 	}

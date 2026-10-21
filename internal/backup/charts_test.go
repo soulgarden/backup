@@ -49,6 +49,9 @@ func TestCharts(t *testing.T) {
 			}
 
 			var values struct {
+				Runner struct {
+					Mode string `yaml:"mode"`
+				} `yaml:"runner"`
 				Image struct {
 					Tag string `yaml:"tag"`
 				} `yaml:"image"`
@@ -72,9 +75,15 @@ func TestCharts(t *testing.T) {
 				t.Fatal(string(out), err)
 			}
 
+			profile := []string{}
+			if values.Runner.Mode == "legacy" {
+				profile = []string{"--set", "runner.mode=verified", "--set", "suspend=true"}
+			}
+
 			render := func(args ...string) string {
 				t.Helper()
-				cmd := exec.Command(helm, append([]string{"template", "backup", chart}, args...)...)
+				command := append([]string{"template", "backup", chart}, profile...)
+				cmd := exec.Command(helm, append(command, args...)...)
 				out, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatal(string(out), err)
@@ -113,7 +122,8 @@ func TestCharts(t *testing.T) {
 			}
 
 			for _, arg := range []string{"s3.host_bucket=old", "backup.verifyRemoteSha256=false", "retention.keepLast=0", "suspend=false"} {
-				cmd := exec.Command(helm, "template", "backup", chart, "--set", arg)
+				command := append([]string{"template", "backup", chart}, profile...)
+				cmd := exec.Command(helm, append(command, "--set", arg)...)
 				if cmd.Run() == nil {
 					t.Fatal("accepted", arg)
 				}

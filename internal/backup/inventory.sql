@@ -1,3 +1,16 @@
+-- Check effective settings in this connection before touching the catalog.
+-- Poolers that discard PGOPTIONS must fail closed.
+DO $backup_session$
+BEGIN
+  IF current_setting('default_transaction_read_only') <> 'on'
+    OR current_setting('transaction_read_only') <> 'on'
+    OR current_setting('statement_timeout')::interval <> interval '5 seconds'
+  THEN
+    RAISE EXCEPTION 'Unsafe backup session settings';
+  END IF;
+END;
+$backup_session$;
+
 SELECT json_build_object(
   'server_version', current_setting('server_version'),
   'server_version_num', current_setting('server_version_num')::int,
